@@ -41,7 +41,10 @@ let saveMessage = "";
 let backgroundModalOpen = false;
 let backgroundConfirmation = { action: "none" };
 let backgroundMessage = "";
+let spriteMessage = "";
 const renderObjectUrls = new Set();
+const defaultSpriteSizePercent = 14;
+let pendingEnvironmentSave = Promise.resolve();
 
 function target(object, label, classes) {
   return `<button class="sound-target ${classes}" data-object="${object}" aria-label="Choose the ${label}"><span class="ring"></span><span class="target-label">${label}</span></button>`;
@@ -163,18 +166,38 @@ function isEnvironmentRecord(record) {
   return record
     && typeof record === "object"
     && typeof record.id === "string"
-    && typeof record.name === "string";
+    && typeof record.name === "string"
+    && (!record.sprites || record.sprites.every((sprite) => sprite
+      && typeof sprite.id === "string"
+      && typeof sprite.name === "string"
+      && typeof sprite.xPercent === "number"
+      && typeof sprite.yPercent === "number"
+      && typeof sprite.sizePercent === "number"
+      && sprite.image?.blob instanceof Blob));
 }
 
 function escapeHtml(value) {
   return String(value).replace(/[&<>"']/g, (character) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[character]);
 }
 
-function backgroundUrl(environment) {
-  if (!environment.background?.blob) return "";
-  const url = URL.createObjectURL(environment.background.blob);
+function blobUrl(blob) {
+  const url = URL.createObjectURL(blob);
   renderObjectUrls.add(url);
   return url;
+}
+
+function backgroundUrl(environment) {
+  return environment.background?.blob ? blobUrl(environment.background.blob) : "";
+}
+
+function spriteMarkup(sprite, layer) {
+  const selected = sprite.id === editingEnvironment.selectedSpriteId;
+  return `<button class="editor-sprite ${selected ? "selected" : ""}" data-sprite-id="${sprite.id}" aria-label="${escapeHtml(sprite.name)}" aria-pressed="${selected}" style="left:${sprite.xPercent}%;top:${sprite.yPercent}%;width:${sprite.sizePercent}%;aspect-ratio:1;z-index:${layer + 1}"><img src="${blobUrl(sprite.image.blob)}" alt="${escapeHtml(sprite.name)}"></button>`;
+}
+
+function spriteNameFromFilename(filename) {
+  const name = filename.replace(/\.[^.]+$/, "").replace(/[-_]+/g, " ").trim().replace(/\s+/g, " ");
+  return name ? name.replace(/\b\w/g, (letter) => letter.toUpperCase()) : "Untitled sprite";
 }
 
 function clearRenderObjectUrls() {
@@ -317,6 +340,7 @@ function renderEditor() {
   const background = editingEnvironment.background
     ? `<img src="${backgroundUrl(editingEnvironment)}" alt="Environment background">`
     : `<p>No background yet</p>`;
+  const sprites = (editingEnvironment.sprites || []).map(spriteMarkup).join("");
   app.innerHTML = `<main class="editor">
     <header class="editor-header">
       <div>
@@ -330,8 +354,10 @@ function renderEditor() {
     <section class="editor-workspace">
       <label for="environment-name">Environment name</label>
       <input id="environment-name" value="${escapeHtml(editingEnvironment.name)}" placeholder="Untitled environment">
-      <section class="activity-canvas" aria-label="Activity area">${background}</section>
+      <section class="activity-canvas" aria-label="Activity area">${background}${sprites}</section>
       <button class="set-background" type="button">${editingEnvironment.background ? "Change background" : "Set background"}</button>
+      <label class="add-sprite">Add sprite image<input class="sprite-file" aria-label="Add sprite image" type="file" accept="image/png,image/jpeg,image/webp"></label>
+      ${spriteMessage ? `<p class="sprite-message" role="alert">${escapeHtml(spriteMessage)}</p>` : ""}
       <p class="editor-next-step">${escapeHtml(draftGuidance(editingEnvironment))}</p>
     </section>
     ${recoveryGuidance()}
@@ -343,11 +369,23 @@ function renderEditor() {
   nameInput.addEventListener("change", () => saveEnvironment({ ...editingEnvironment, name: nameInput.value }));
   document.querySelector(".done-editing").addEventListener("click", () => { view = "library"; backgroundModalOpen = false; render(); });
   document.querySelector(".set-background").addEventListener("click", () => { backgroundModalOpen = true; backgroundMessage = ""; render(); });
-  document.querySelector(".activity-canvas").addEventListener("dragover", (event) => event.preventDefault());
-  document.querySelector(".activity-canvas").addEventListener("drop", (event) => {
+  const spriteFile = document.querySelector(".sprite-file");
+  spriteFile.addEventListener("change", () => addSpriteFromFile(spriteFile.files[0]));
+  document.querySelectorAll(".editor-sprite").forEach(bindSpriteEvents);
+  const canvas = document.querySelector(".activity-canvas");
+  canvas.addEventListener("click", (event) => {
+    if (event.target === canvas || event.target.matches(".activity-canvas > img, .activity-canvas > p")) deselectSprite();
+  });
+  canvas.addEventListener("dragover", (event) => event.preventDefault());
+  canvas.addEventListener("drop", (event) => {
     event.preventDefault();
-    saveMessage = "Images dropped on the activity area are not backgrounds. Use Set background to change this image.";
-    render();
+    const file = event.dataTransfer.files[0];
+    if (event.dataTransfer.files.length !== 1) {
+      spriteMessage = "Drop one image at a time.";
+      render();
+      return;
+    }
+    addSpriteFromFile(file, dropPosition(event, canvas));
   });
   bindBackgroundModal();
 }
@@ -359,13 +397,159 @@ function render() {
   renderActivity();
 }
 
-function validateBackground(file) {
+async function addSpriteFromFile(file, position = { xPercent: 50, yPercent: 50 }) {
+  const error = validateImage(file);
+  if (error) {
+    spriteMessage = error;
+    render();
+    return;
+  }
+  if (!await imageCanDecode(file)) {
+    spriteMessage = "This image could not be opened. Choose a PNG, JPEG, or WebP image that is not damaged.";
+    render();
+    return;
+  }
+  spriteMessage = "";
+  const sprite = {
+    id: crypto.randomUUID(),
+    name: spriteNameFromFilename(file.name),
+    image: { blob: file.slice(0, file.size, file.type) },
+    xPercent: position.xPercent,
+    yPercent: position.yPercent,
+    sizePercent: defaultSpriteSizePercent,
+  };
+  await saveEnvironment({ ...editingEnvironment, sprites: [...(editingEnvironment.sprites || []), sprite], selectedSpriteId: sprite.id }, false, true);
+}
+
+function constrainedPercent(point, start, length, sizePercent) {
+  const halfSize = sizePercent / 2;
+  return Math.max(halfSize, Math.min(100 - halfSize, ((point - start) / length) * 100));
+}
+
+function dropPosition(event, canvas) {
+  const bounds = canvas.getBoundingClientRect();
+  return {
+    xPercent: constrainedPercent(event.clientX, bounds.left, bounds.width, defaultSpriteSizePercent),
+    yPercent: constrainedPercent(event.clientY, bounds.top, bounds.height, defaultSpriteSizePercent),
+  };
+}
+
+function draggedSpritePosition(event, drag) {
+  return {
+    xPercent: constrainedPercent(drag.startCanvasX + event.clientX - drag.startPointerX, drag.bounds.left, drag.bounds.width, drag.sprite.sizePercent),
+    yPercent: constrainedPercent(drag.startCanvasY + event.clientY - drag.startPointerY, drag.bounds.top, drag.bounds.height, drag.sprite.sizePercent),
+  };
+}
+
+function bringSpriteToFront(id, sprites = editingEnvironment.sprites || []) {
+  const selected = sprites.find((sprite) => sprite.id === id);
+  return selected ? [...sprites.filter((sprite) => sprite.id !== id), selected] : sprites;
+}
+
+function showSelectedSprite(id) {
+  document.querySelectorAll(".editor-sprite").forEach((element) => {
+    const selected = element.dataset.spriteId === id;
+    const layer = editingEnvironment.sprites.findIndex((sprite) => sprite.id === element.dataset.spriteId);
+    element.classList.toggle("selected", selected);
+    element.setAttribute("aria-pressed", String(selected));
+    element.style.zIndex = layer + 1;
+  });
+}
+
+function selectSprite(id) {
+  const currentSprites = editingEnvironment.sprites || [];
+  if (editingEnvironment.selectedSpriteId === id && currentSprites.at(-1)?.id === id) return;
+  const sprites = bringSpriteToFront(id, currentSprites);
+  editingEnvironment = { ...editingEnvironment, sprites, selectedSpriteId: id };
+  showSelectedSprite(id);
+  saveEnvironment(editingEnvironment);
+}
+
+function deselectSprite() {
+  if (!editingEnvironment.selectedSpriteId) return;
+  editingEnvironment = { ...editingEnvironment, selectedSpriteId: undefined };
+  showSelectedSprite();
+  saveEnvironment(editingEnvironment);
+}
+
+function moveSpriteToFront(id) {
+  editingEnvironment = {
+    ...editingEnvironment,
+    sprites: bringSpriteToFront(id),
+    selectedSpriteId: id,
+  };
+}
+
+function updateSpritePosition(id, position) {
+  editingEnvironment = {
+    ...editingEnvironment,
+    sprites: editingEnvironment.sprites.map((sprite) => sprite.id === id ? { ...sprite, ...position } : sprite),
+  };
+}
+
+function showDraggedSprite(element, position) {
+  element.style.left = `${position.xPercent}%`;
+  element.style.top = `${position.yPercent}%`;
+  showSelectedSprite(element.dataset.spriteId);
+}
+
+function dragStart(event, element, sprite, canvas) {
+  const bounds = canvas.getBoundingClientRect();
+  return {
+    element,
+    sprite,
+    bounds,
+    startPointerX: event.clientX,
+    startPointerY: event.clientY,
+    startCanvasX: bounds.left + (sprite.xPercent / 100) * bounds.width,
+    startCanvasY: bounds.top + (sprite.yPercent / 100) * bounds.height,
+  };
+}
+
+function bindSpriteEvents(element) {
+  element.addEventListener("click", (event) => {
+    event.stopPropagation();
+    selectSprite(element.dataset.spriteId);
+  });
+  element.addEventListener("pointerdown", (event) => {
+    event.preventDefault();
+    event.stopPropagation();
+    const sprite = editingEnvironment.sprites.find((item) => item.id === element.dataset.spriteId);
+    if (!sprite) return;
+    const canvas = document.querySelector(".activity-canvas");
+    moveSpriteToFront(sprite.id);
+    showSelectedSprite(sprite.id);
+    element.setPointerCapture(event.pointerId);
+    const drag = dragStart(event, element, sprite, canvas);
+    const move = (moveEvent) => {
+      const position = draggedSpritePosition(moveEvent, drag);
+      updateSpritePosition(sprite.id, position);
+      showDraggedSprite(element, position);
+    };
+    const finish = () => {
+      element.removeEventListener("pointermove", move);
+      element.removeEventListener("pointerup", finish);
+      element.removeEventListener("pointercancel", finish);
+      if (element.hasPointerCapture(event.pointerId)) element.releasePointerCapture(event.pointerId);
+      saveEnvironment(editingEnvironment);
+    };
+    element.addEventListener("pointermove", move);
+    element.addEventListener("pointerup", finish, { once: true });
+    element.addEventListener("pointercancel", finish, { once: true });
+  });
+}
+
+function validateImage(file) {
   if (!file) return "Choose an image to continue.";
   if (!["image/png", "image/jpeg", "image/webp"].includes(file.type)) {
     return "Choose a PNG, JPEG, or WebP image.";
   }
   if (file.size > 10 * 1024 * 1024) return "Choose an image smaller than 10 MB.";
   return "";
+}
+
+function validateBackground(file) {
+  return validateImage(file);
 }
 
 function imageCanDecode(file) {
@@ -405,7 +589,7 @@ async function selectBackground(file) {
 async function saveBackground(file) {
   backgroundConfirmation = { action: "none" };
   backgroundMessage = editingEnvironment.background ? "Background replaced." : "Background added.";
-  await saveEnvironment({ ...editingEnvironment, background: { blob: file.slice(0, file.size, file.type) } });
+  await saveEnvironment({ ...editingEnvironment, background: { blob: file.slice(0, file.size, file.type) } }, false, true);
 }
 
 function bindBackgroundModal() {
@@ -438,7 +622,7 @@ function bindBackgroundModal() {
   document.querySelector(".confirm-remove-background")?.addEventListener("click", async () => {
     backgroundConfirmation = { action: "none" };
     backgroundMessage = "Background removed.";
-    await saveEnvironment({ ...editingEnvironment, background: undefined });
+    await saveEnvironment({ ...editingEnvironment, background: undefined }, false, true);
   });
 }
 
@@ -454,23 +638,45 @@ function openEditor(id) {
   render();
 }
 
-async function saveEnvironment(environment, openAfterSave = false) {
+function updateSaveStatus() {
+  const status = document.querySelector(".storage-status");
+  if (!status) return;
+  status.className = `storage-status ${saveState}`;
+  status.textContent = saveState === "saving"
+    ? "Saving on this device…"
+    : saveState === "failed"
+      ? "Could not save on this device"
+      : "Saved on this device";
+}
+
+function updateSaveGuidance() {
+  const guidance = document.querySelector(".storage-guidance");
+  if (guidance) guidance.textContent = saveMessage;
+}
+
+async function saveEnvironment(environment, openAfterSave = false, renderEditorAfterSave = false) {
   editingEnvironment = environment;
   const existingIndex = environments.findIndex((item) => item.id === environment.id);
   if (existingIndex === -1) environments = [...environments, environment];
   else environments[existingIndex] = environment;
   saveState = "saving";
   saveMessage = "";
-  render();
+  if (view === "editor" && !openAfterSave && !renderEditorAfterSave) updateSaveStatus();
+  else render();
   try {
-    await environmentStorage.save(environment);
+    const save = pendingEnvironmentSave.then(() => environmentStorage.save(environment));
+    pendingEnvironmentSave = save.catch(() => {});
+    await save;
     saveState = "saved";
     if (openAfterSave) view = "editor";
   } catch (error) {
     saveState = "failed";
     saveMessage = "This environment could not be saved on this device. Check browser storage and try again.";
   }
-  render();
+  if (view === "editor" && !openAfterSave && !renderEditorAfterSave) {
+    updateSaveStatus();
+    updateSaveGuidance();
+  } else render();
 }
 
 async function start() {
