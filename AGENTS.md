@@ -150,3 +150,17 @@ So when the user asks to "publish", "go live", "share it", or "make it real":
 
 Never explain branches, pull requests, merges, or GitHub review to the user
 unless they ask, or have shown you that they're a developer.
+
+## Agent skills
+
+### Issue tracker
+
+Issues and specs are tracked with GitHub Issues. See `docs/agents/issue-tracker.md`.
+
+### Triage labels
+
+Triage uses the five standard labels. See `docs/agents/triage-labels.md`.
+
+### Domain docs
+
+Domain documentation uses the single-context layout. See `docs/agents/domain.md`.
