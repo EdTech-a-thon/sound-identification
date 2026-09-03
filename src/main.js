@@ -1,4 +1,5 @@
 import "./style.css";
+import { environmentStorage } from "./environment-storage.js";
 
 const scenes = {
   park: {
@@ -32,6 +33,11 @@ let roundCount = 3;
 let completedRounds = 0;
 let activityFinished = false;
 let maxPlaybackSeconds = 5;
+let view = "activity";
+let environments = [];
+let editingEnvironment;
+let saveState = "saved";
+let saveMessage = "";
 
 function target(object, label, classes) {
   return `<button class="sound-target ${classes}" data-object="${object}" aria-label="Choose the ${label}"><span class="ring"></span><span class="target-label">${label}</span></button>`;
@@ -66,14 +72,15 @@ function spriteModal() {
   return `<div class="modal-backdrop"><section class="sound-modal sprite-modal" role="dialog" aria-modal="true" aria-labelledby="sprite-manager-title"><button class="close-sprite-modal close-modal" aria-label="Close">×</button><p class="eyebrow">TEACHER TOOLS</p><h2 id="sprite-manager-title">Add a custom sprite</h2><p class="modal-copy">Upload a PNG or JPEG, give it an optional sound, then place it anywhere in this scene.</p><form class="sprite-form sound-form"><label>Sprite name<input name="label" required placeholder="For example, barking dog"></label><label class="file-picker">Choose PNG or JPEG<input name="image" type="file" accept="image/png,image/jpeg" required><span>Choose an image</span></label><label class="file-picker">Optional sound file<input name="audio" type="file" accept="audio/*"><span>Choose an audio file</span></label><div class="position-row"><label>Left <input name="x" type="range" min="0" max="90" value="45"><output>45%</output></label><label>Top <input name="y" type="range" min="0" max="80" value="45"><output>45%</output></label></div><label>Size <input name="size" type="range" min="60" max="180" value="110"><output>110 px</output></label><button class="save-sound" type="submit">Add sprite to scene</button></form><div class="assignment-heading"><h3>Custom sprites</h3><span>${scenes[activeScene].sprites.length}</span></div><ul class="sound-list sprite-list">${sprites}</ul></section></div>`;
 }
 
-function render() {
+function renderActivity() {
   const scene = scenes[activeScene];
-  app.innerHTML = `<main class="park"><header><p class="eyebrow">SOUND EXPLORER</p><div class="heading-row"><div><h1>${scene.title}</h1><p>${scene.description}</p></div><div class="scene-menu" aria-label="Choose a scene"><button class="scene-choice ${activeScene === "park" ? "active" : ""}" data-scene="park">Park</button><button class="scene-choice ${activeScene === "kitchen" ? "active" : ""}" data-scene="kitchen">Kitchen</button></div></div><div class="listen-panel"><button class="listen-button" type="button"><span>▶</span> Listen to the sound</button><button class="stop-button" type="button">■ Stop</button><button class="new-sound" type="button">New sound</button><label class="round-picker">Rounds <select aria-label="Number of practice rounds">${[1, 3, 5, 10].map((count) => `<option value="${count}" ${count === roundCount ? "selected" : ""}>${count}</option>`).join("")}</select></label><button class="manage-sprites" type="button">Add sprite</button><button class="manage-sounds" type="button">Manage sounds</button></div><p class="round-progress">Round ${Math.min(completedRounds + 1, roundCount)} of ${roundCount}</p></header>${activeScene === "park" ? parkScene() : kitchenScene()}<p class="message" role="status"></p>${managementModal()}${spriteModal()}</main>`;
+  app.innerHTML = `<main class="park"><header><p class="eyebrow">SOUND EXPLORER</p><div class="heading-row"><div><h1>${scene.title}</h1><p>${scene.description}</p></div><div class="scene-menu" aria-label="Choose a scene"><button class="scene-choice ${activeScene === "park" ? "active" : ""}" data-scene="park">Park</button><button class="scene-choice ${activeScene === "kitchen" ? "active" : ""}" data-scene="kitchen">Kitchen</button><button class="open-library" type="button">Environments</button></div></div><div class="listen-panel"><button class="listen-button" type="button"><span>▶</span> Listen to the sound</button><button class="stop-button" type="button">■ Stop</button><button class="new-sound" type="button">New sound</button><label class="round-picker">Rounds <select aria-label="Number of practice rounds">${[1, 3, 5, 10].map((count) => `<option value="${count}" ${count === roundCount ? "selected" : ""}>${count}</option>`).join("")}</select></label><button class="manage-sprites" type="button">Add sprite</button><button class="manage-sounds" type="button">Manage sounds</button></div><p class="round-progress">Round ${Math.min(completedRounds + 1, roundCount)} of ${roundCount}</p></header>${activeScene === "park" ? parkScene() : kitchenScene()}<p class="message" role="status"></p>${managementModal()}${spriteModal()}</main>`;
   bindControls();
   chooseSound();
 }
 
 function bindControls() {
+  document.querySelector(".open-library").addEventListener("click", () => { audio?.pause(); view = "library"; render(); });
   document.querySelectorAll(".scene-choice").forEach((button) => button.addEventListener("click", () => { audio?.pause(); activeScene = button.dataset.scene; currentSound = undefined; completedRounds = 0; activityFinished = false; modalOpen = false; spriteModalOpen = false; render(); }));
   document.querySelector(".listen-button").addEventListener("click", playCurrentSound);
   document.querySelector(".stop-button").addEventListener("click", stopSound);
@@ -132,4 +139,166 @@ function updateProgress() { document.querySelector(".round-progress").textConten
 function chooseSound() { const available = Object.keys(scenes[activeScene].sounds); const message = document.querySelector(".message"); if (activityFinished) { message.textContent = `Great work! You finished all ${roundCount} rounds. Choose New sound to practise again.`; return; } if (!available.length) { message.textContent = "Add an audio file with Manage sounds to start this scene."; return; } const choices = available.filter((sound) => sound !== currentSound); currentSound = (choices.length ? choices : available)[Math.floor(Math.random() * (choices.length ? choices.length : available.length))]; document.querySelectorAll(".sound-target").forEach((item) => item.classList.remove("selected", "correct", "incorrect")); message.textContent = "Listen carefully, then choose what made the sound."; updateProgress(); playCurrentSound(); }
 function checkAnswer(targetButton) { const message = document.querySelector(".message"); if (activityFinished) { message.textContent = `You finished all ${roundCount} rounds. Choose New sound to play again.`; return; } if (!currentSound) { message.textContent = "Add a sound or press Listen to begin."; return; } document.querySelectorAll(".sound-target").forEach((item) => item.classList.remove("selected", "correct", "incorrect")); targetButton.classList.add("selected"); if (targetButton.dataset.object === currentSound) { targetButton.classList.add("correct"); completedRounds += 1; if (completedRounds === roundCount) { activityFinished = true; message.textContent = `Wonderful! You matched all ${roundCount} sounds.`; updateProgress(); stopSound(false); } else { message.textContent = `Yes! That was ${scenes[activeScene].sounds[currentSound].label}.`; window.setTimeout(chooseSound, 1300); } } else { targetButton.classList.add("incorrect"); message.textContent = "Not quite. Listen once more and try again."; } }
 
-render();
+async function loadEnvironments() {
+  try {
+    const records = await environmentStorage.list();
+    if (!records.every(isEnvironmentRecord)) {
+      throw new Error("Saved environment could not be read");
+    }
+    environments = records;
+    saveState = "saved";
+  } catch (error) {
+    saveState = "failed";
+    saveMessage = error.message === "Saved environment could not be read"
+      ? "A saved environment could not be read. It was not shown; try refreshing the page."
+      : "We could not open saved environments on this device. Try refreshing the page.";
+  }
+}
+
+function isEnvironmentRecord(record) {
+  return record
+    && typeof record === "object"
+    && typeof record.id === "string"
+    && typeof record.name === "string";
+}
+
+function escapeHtml(value) {
+  return String(value).replace(/[&<>"']/g, (character) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[character]);
+}
+
+function saveStatus() {
+  const text = saveState === "saving"
+    ? "Saving on this device…"
+    : saveState === "failed"
+      ? "Could not save on this device"
+      : "Saved on this device";
+  return `<div class="storage-status ${saveState}" role="status">${text}</div>`;
+}
+
+function recoveryGuidance() {
+  return saveMessage ? `<p class="storage-guidance" role="alert">${saveMessage}</p>` : "";
+}
+
+function starterCard(name, state, description) {
+  const playable = state === "Ready to play";
+  const action = playable
+    ? `<button class="play-starter" data-scene="${name.toLowerCase()}" type="button" aria-label="Play ${name}">Play</button>`
+    : `<button disabled type="button" aria-label="Play ${name}">Not available yet</button>`;
+
+  return `<article class="environment-card starter-card">
+    <div class="environment-thumbnail ${name.toLowerCase()}-thumbnail" aria-hidden="true"></div>
+    <div class="environment-card-copy">
+      <p class="card-kicker">Starter environment</p>
+      <h2>${name}</h2>
+      <p>${description}</p>
+      <span class="environment-status ${playable ? "ready" : "soon"}">${state}</span>
+    </div>
+    ${action}
+  </article>`;
+}
+
+function userEnvironmentCard(environment) {
+  const name = environment.name || "Untitled environment";
+  return `<article class="environment-card draft-card">
+    <div class="environment-thumbnail draft-thumbnail" aria-hidden="true">Draft</div>
+    <div class="environment-card-copy">
+      <p class="card-kicker">Saved on this device</p>
+      <h2>${escapeHtml(name)}</h2>
+      <p>Add a background, sprites, and sounds to make this activity playable.</p>
+      <span class="environment-status draft">Draft</span>
+    </div>
+    <button class="edit-environment" data-environment-id="${environment.id}" type="button">Edit</button>
+  </article>`;
+}
+
+function renderLibrary() {
+  app.innerHTML = `<main class="library">
+    <header class="library-header">
+      <div>
+        <p class="eyebrow">SOUND EXPLORER</p>
+        <h1>Your environments</h1>
+        <p>Choose a starter activity or create one that stays on this device.</p>
+      </div>
+      ${saveStatus()}
+    </header>
+    <section class="environment-grid">
+      ${starterCard("Park", "Ready to play", "A working sound-matching example.")}
+      ${starterCard("Kitchen", "Coming soon", "This starter activity is not ready to play yet.")}
+      ${environments.map(userEnvironmentCard).join("")}
+    </section>
+    <button class="create-environment" type="button">Create environment</button>
+    ${recoveryGuidance()}
+  </main>`;
+  document.querySelector(".create-environment").addEventListener("click", createEnvironment);
+  document.querySelectorAll(".edit-environment").forEach((button) => button.addEventListener("click", () => openEditor(button.dataset.environmentId)));
+  document.querySelectorAll(".play-starter").forEach((button) => button.addEventListener("click", () => { activeScene = button.dataset.scene; view = "activity"; render(); }));
+}
+
+function renderEditor() {
+  app.innerHTML = `<main class="editor">
+    <header class="editor-header">
+      <div>
+        <p class="eyebrow">ENVIRONMENT EDITOR</p>
+        <h1>Build your activity</h1>
+        <p>Changes save automatically on this device.</p>
+      </div>
+      ${saveStatus()}
+      <button class="done-editing" type="button">Done</button>
+    </header>
+    <section class="editor-workspace">
+      <label for="environment-name">Environment name</label>
+      <input id="environment-name" value="${escapeHtml(editingEnvironment.name)}" placeholder="Untitled environment">
+      <p class="editor-next-step">Your new environment is a draft. You will be able to add a background, sprites, and sounds in the next steps.</p>
+    </section>
+    ${recoveryGuidance()}
+  </main>`;
+  const nameInput = document.querySelector("#environment-name");
+  nameInput.focus();
+  nameInput.select();
+  nameInput.addEventListener("change", () => saveEnvironment({ ...editingEnvironment, name: nameInput.value }));
+  document.querySelector(".done-editing").addEventListener("click", () => { view = "library"; render(); });
+}
+
+function render() {
+  if (view === "library") return renderLibrary();
+  if (view === "editor") return renderEditor();
+  renderActivity();
+}
+
+async function createEnvironment() {
+  const environment = { id: crypto.randomUUID(), name: "Untitled environment" };
+  await saveEnvironment(environment, true);
+}
+
+function openEditor(id) {
+  editingEnvironment = environments.find((environment) => environment.id === id);
+  if (!editingEnvironment) return;
+  view = "editor";
+  render();
+}
+
+async function saveEnvironment(environment, openAfterSave = false) {
+  editingEnvironment = environment;
+  const existingIndex = environments.findIndex((item) => item.id === environment.id);
+  if (existingIndex === -1) environments = [...environments, environment];
+  else environments[existingIndex] = environment;
+  saveState = "saving";
+  saveMessage = "";
+  render();
+  try {
+    await environmentStorage.save(environment);
+    saveState = "saved";
+    if (openAfterSave) view = "editor";
+  } catch (error) {
+    saveState = "failed";
+    saveMessage = "This environment could not be saved on this device. Check browser storage and try again.";
+  }
+  render();
+}
+
+async function start() {
+  await loadEnvironments();
+  render();
+}
+
+start();
