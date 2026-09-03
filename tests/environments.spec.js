@@ -11,7 +11,7 @@ const validImage = (name = "background.png", mimeType = "image/png") => ({
 
 async function spriteGeometry(page, name) {
   const canvas = await page.locator(".activity-canvas").boundingBox();
-  const sprite = await page.getByRole("button", { name }).boundingBox();
+  const sprite = await page.getByRole("button", { name, exact: true }).boundingBox();
   if (!canvas || !sprite) return null;
   return {
     centerX: (sprite.x + sprite.width / 2 - canvas.x) / canvas.width,
@@ -142,9 +142,9 @@ test("educators can deselect a sprite by clicking empty canvas space", async ({ 
   await page.getByRole("button", { name: "Create environment" }).click();
   await page.getByLabel("Add sprite image").setInputFiles(validImage("scene.png"));
 
-  await expect(page.getByRole("button", { name: "Scene" })).toHaveAttribute("aria-pressed", "true");
+  await expect(page.getByRole("button", { name: "Scene", exact: true })).toHaveAttribute("aria-pressed", "true");
   await page.locator(".activity-canvas").click({ position: { x: 10, y: 10 } });
-  await expect(page.getByRole("button", { name: "Scene" })).toHaveAttribute("aria-pressed", "false");
+  await expect(page.getByRole("button", { name: "Scene", exact: true })).toHaveAttribute("aria-pressed", "false");
 });
 
 test("educators add a named, centered sprite whose relative size adapts to the activity area", async ({ page }) => {
@@ -154,8 +154,8 @@ test("educators add a named, centered sprite whose relative size adapts to the a
 
   await page.getByLabel("Add sprite image").setInputFiles(validImage("forest_fox.png"));
 
-  await expect(page.getByRole("button", { name: "Forest Fox" })).toBeVisible();
-  await expect(page.getByRole("button", { name: "Forest Fox" })).toHaveAttribute("aria-pressed", "true");
+  await expect(page.getByRole("button", { name: "Forest Fox", exact: true })).toBeVisible();
+  await expect(page.getByRole("button", { name: "Forest Fox", exact: true })).toHaveAttribute("aria-pressed", "true");
   const original = await spriteGeometry(page, "Forest Fox");
   expect(original.centerX).toBeCloseTo(0.5, 2);
   expect(original.centerY).toBeCloseTo(0.5, 2);
@@ -181,7 +181,7 @@ test("sprite selection and saving keep the canvas and image preview in place", a
     window.spriteDomBeforeInteraction = { canvas, image, src: image.src };
   });
 
-  const sprite = page.getByRole("button", { name: "Steady Owl" });
+  const sprite = page.getByRole("button", { name: "Steady Owl", exact: true });
   await sprite.click();
   const box = await sprite.boundingBox();
   await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
@@ -237,8 +237,8 @@ test("educators can drop, move, constrain, layer, resize proportionally, and reo
 
   await page.getByLabel("Add sprite image").setInputFiles(validImage("first_bird.png"));
   await page.getByLabel("Add sprite image").setInputFiles(validImage("second_fox.png"));
-  const firstBird = page.getByRole("button", { name: "First Bird" });
-  const secondFox = page.getByRole("button", { name: "Second Fox" });
+  const firstBird = page.getByRole("button", { name: "First Bird", exact: true });
+  const secondFox = page.getByRole("button", { name: "Second Fox", exact: true });
 
   await expect(secondFox).toBeVisible();
   await expect(firstBird).toBeVisible();
@@ -280,7 +280,7 @@ test("educators can drop, move, constrain, layer, resize proportionally, and reo
       dataTransfer,
     }));
   });
-  const droppedOwl = page.getByRole("button", { name: "Dropped Owl" });
+  const droppedOwl = page.getByRole("button", { name: "Dropped Owl", exact: true });
   await expect(droppedOwl).toBeVisible();
   await expect.poll(() => spriteGeometry(page, "Dropped Owl")).toMatchObject({ centerX: expect.closeTo(0.25, 1), centerY: expect.closeTo(0.65, 1) });
   await firstBird.focus();
@@ -308,6 +308,180 @@ test("educators can drop, move, constrain, layer, resize proportionally, and reo
     centerY: expect.closeTo(0.65, 1),
     widthRatio: expect.closeTo(0.14, 2),
   });
+});
+
+test("the sprite menu offers rename, replace image, and delete, and closes on outside interaction", async ({ page }) => {
+  await page.goto("/");
+  await page.getByRole("button", { name: "Environments" }).click();
+  await page.getByRole("button", { name: "Create environment" }).click();
+  await page.getByLabel("Add sprite image").setInputFiles(validImage("garden_gnome.png"));
+
+  const trigger = page.getByRole("button", { name: "Sprite options for Garden Gnome" });
+  await expect(trigger).toBeVisible();
+  await trigger.click();
+  await expect(page.getByRole("menuitem", { name: "Rename" })).toBeVisible();
+  await expect(page.getByLabel("Replace image")).toBeAttached();
+  await expect(page.getByRole("menuitem", { name: "Delete" })).toBeVisible();
+
+  await page.keyboard.press("Escape");
+  await expect(page.getByRole("menuitem", { name: "Rename" })).toHaveCount(0);
+  await expect(page.getByRole("button", { name: "Garden Gnome", exact: true })).toHaveAttribute("aria-pressed", "true");
+
+  await trigger.click();
+  await expect(page.getByRole("menuitem", { name: "Rename" })).toBeVisible();
+  await page.locator(".activity-canvas").click({ position: { x: 5, y: 5 } });
+  await expect(page.getByRole("menuitem", { name: "Rename" })).toHaveCount(0);
+});
+
+test("educators can rename a sprite from its menu and the name survives reload", async ({ page }) => {
+  await page.goto("/");
+  await page.getByRole("button", { name: "Environments" }).click();
+  await page.getByRole("button", { name: "Create environment" }).click();
+  await page.getByLabel("Add sprite image").setInputFiles(validImage("old_name.png"));
+
+  await page.getByRole("button", { name: "Sprite options for Old Name" }).click();
+  await page.getByRole("menuitem", { name: "Rename" }).click();
+  const nameField = page.getByLabel("Sprite name");
+  await nameField.fill("Whispering Willow");
+  await nameField.press("Enter");
+
+  await expect(page.getByRole("button", { name: "Whispering Willow", exact: true })).toBeVisible();
+  await expect(page.getByRole("status")).toHaveText("Saved on this device");
+
+  await page.getByRole("button", { name: "Done" }).click();
+  await page.reload();
+  await page.getByRole("button", { name: "Environments" }).click();
+  await page.getByRole("button", { name: "Edit" }).click();
+  await expect(page.getByRole("button", { name: "Whispering Willow", exact: true })).toBeVisible();
+});
+
+test("replacing a sprite's image validates the file and preserves its position, size, and identity", async ({ page }) => {
+  await page.goto("/");
+  await page.getByRole("button", { name: "Environments" }).click();
+  await page.getByRole("button", { name: "Create environment" }).click();
+  await page.getByLabel("Add sprite image").setInputFiles(validImage("river_otter.png"));
+  await expect(page.getByRole("button", { name: "River Otter", exact: true })).toBeVisible();
+  await expect(page.getByRole("status")).toHaveText("Saved on this device");
+
+  const before = await spriteGeometry(page, "River Otter");
+  await page.getByRole("button", { name: "Sprite options for River Otter" }).click();
+
+  const replace = page.getByLabel("Replace image");
+  await replace.setInputFiles({ name: "notes.txt", mimeType: "text/plain", buffer: Buffer.from("not an image") });
+  await expect(page.getByRole("alert")).toHaveText("Choose a PNG, JPEG, or WebP image.");
+
+  await page.getByRole("button", { name: "Sprite options for River Otter" }).click();
+  await page.getByLabel("Replace image").setInputFiles(validImage("river_otter_v2.png"));
+
+  await expect(page.getByRole("button", { name: "River Otter", exact: true })).toBeVisible();
+  await expect(page.getByRole("status")).toHaveText("Saved on this device");
+  await expect.poll(() => spriteGeometry(page, "River Otter")).toMatchObject({
+    centerX: expect.closeTo(before.centerX, 2),
+    centerY: expect.closeTo(before.centerY, 2),
+    widthRatio: expect.closeTo(before.widthRatio, 2),
+  });
+
+  await page.getByRole("button", { name: "Done" }).click();
+  await page.reload();
+  await page.getByRole("button", { name: "Environments" }).click();
+  await page.getByRole("button", { name: "Edit" }).click();
+  await expect(page.getByRole("button", { name: "River Otter", exact: true })).toBeVisible();
+  await expect.poll(() => spriteGeometry(page, "River Otter")).toMatchObject({
+    centerX: expect.closeTo(before.centerX, 2),
+    centerY: expect.closeTo(before.centerY, 2),
+    widthRatio: expect.closeTo(before.widthRatio, 2),
+  });
+});
+
+test("the sprite menu can be opened and its actions triggered with the keyboard alone", async ({ page }) => {
+  await page.goto("/");
+  await page.getByRole("button", { name: "Environments" }).click();
+  await page.getByRole("button", { name: "Create environment" }).click();
+  await page.getByLabel("Add sprite image").setInputFiles(validImage("keyboard_kite.png"));
+  await expect(page.getByRole("button", { name: "Keyboard Kite", exact: true })).toBeVisible();
+
+  const trigger = page.getByRole("button", { name: "Sprite options for Keyboard Kite" });
+  await trigger.focus();
+  await page.keyboard.press("Enter");
+  await expect(page.getByRole("menuitem", { name: "Rename" })).toBeFocused();
+
+  await page.keyboard.press("Tab");
+  await page.keyboard.press("Tab");
+  await expect(page.getByRole("menuitem", { name: "Delete" })).toBeFocused();
+  await page.keyboard.press("Enter");
+
+  await expect(page.getByRole("button", { name: "Keyboard Kite", exact: true })).toHaveCount(0);
+  await expect(page.getByRole("button", { name: "Undo" })).toBeVisible();
+});
+
+test("dropping an image directly on an existing sprite creates a new sprite instead of replacing it", async ({ page }) => {
+  await page.goto("/");
+  await page.getByRole("button", { name: "Environments" }).click();
+  await page.getByRole("button", { name: "Create environment" }).click();
+  await page.getByLabel("Add sprite image").setInputFiles(validImage("anchor_point.png"));
+
+  const target = page.getByRole("button", { name: "Anchor Point", exact: true });
+  await expect(target).toBeVisible();
+  await expect(page.getByRole("status")).toHaveText("Saved on this device");
+  const box = await target.boundingBox();
+  await page.locator(".activity-canvas").evaluate((canvas, [x, y]) => {
+    const dataTransfer = new DataTransfer();
+    dataTransfer.items.add(new File([
+      Uint8Array.from(atob("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADElEQVR42mNk+M/wHwAF/gL+V3FuswAAAABJRU5ErkJggg=="), (character) => character.charCodeAt(0)),
+    ], "second_layer.png", { type: "image/png" }));
+    canvas.dispatchEvent(new DragEvent("drop", { bubbles: true, clientX: x, clientY: y, dataTransfer }));
+  }, [box.x + box.width / 2, box.y + box.height / 2]);
+
+  await expect(page.getByRole("button", { name: "Anchor Point", exact: true })).toBeVisible();
+  await expect(page.getByRole("button", { name: "Second Layer", exact: true })).toBeVisible();
+  await expect(page.locator(".editor-sprite")).toHaveCount(2);
+});
+
+test("deleting a sprite offers a short-lived undo that restores it, and deletion persists otherwise", async ({ page }) => {
+  await page.goto("/");
+  await page.getByRole("button", { name: "Environments" }).click();
+  await page.getByRole("button", { name: "Create environment" }).click();
+  await page.getByLabel("Add sprite image").setInputFiles(validImage("kept_lantern.png"));
+  await page.locator(".activity-canvas").evaluate((canvas) => {
+    const bounds = canvas.getBoundingClientRect();
+    const dataTransfer = new DataTransfer();
+    dataTransfer.items.add(new File([
+      Uint8Array.from(atob("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADElEQVR42mNk+M/wHwAF/gL+V3FuswAAAABJRU5ErkJggg=="), (character) => character.charCodeAt(0)),
+    ], "doomed_kettle.png", { type: "image/png" }));
+    canvas.dispatchEvent(new DragEvent("drop", {
+      bubbles: true,
+      clientX: bounds.left + bounds.width * 0.15,
+      clientY: bounds.top + bounds.height * 0.15,
+      dataTransfer,
+    }));
+  });
+  await expect(page.getByRole("button", { name: "Doomed Kettle", exact: true })).toBeVisible();
+  await expect(page.getByRole("status")).toHaveText("Saved on this device");
+
+  const before = await spriteGeometry(page, "Doomed Kettle");
+  await page.getByRole("button", { name: "Sprite options for Doomed Kettle" }).click();
+  await page.getByRole("menuitem", { name: "Delete" }).click();
+
+  await expect(page.getByRole("button", { name: "Doomed Kettle", exact: true })).toHaveCount(0);
+  await expect(page.getByRole("button", { name: "Undo" })).toBeVisible();
+  await page.getByRole("button", { name: "Undo" }).click();
+
+  await expect(page.getByRole("button", { name: "Doomed Kettle", exact: true })).toBeVisible();
+  await expect(page.getByRole("status")).toHaveText("Saved on this device");
+  await expect.poll(() => spriteGeometry(page, "Doomed Kettle")).toMatchObject({
+    centerX: expect.closeTo(before.centerX, 2),
+    centerY: expect.closeTo(before.centerY, 2),
+  });
+
+  await page.getByRole("button", { name: "Kept Lantern", exact: true }).click();
+  await page.getByRole("button", { name: "Sprite options for Kept Lantern" }).click();
+  await page.getByRole("menuitem", { name: "Delete" }).click();
+  await page.getByRole("button", { name: "Done" }).click();
+  await page.reload();
+  await page.getByRole("button", { name: "Environments" }).click();
+  await page.getByRole("button", { name: "Edit" }).click();
+  await expect(page.getByRole("button", { name: "Kept Lantern", exact: true })).toHaveCount(0);
+  await expect(page.getByRole("button", { name: "Doomed Kettle", exact: true })).toBeVisible();
 });
 
 test("shows recovery guidance for a corrupt saved environment", async ({ page }) => {

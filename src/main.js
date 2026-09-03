@@ -42,6 +42,10 @@ let backgroundModalOpen = false;
 let backgroundConfirmation = { action: "none" };
 let backgroundMessage = "";
 let spriteMessage = "";
+let spriteMenuOpenId;
+let spriteMenuMode = "actions";
+let undoDeletedSprite;
+let undoTimeoutId;
 const renderObjectUrls = new Set();
 const defaultSpriteSizePercent = 14;
 let pendingEnvironmentSave = Promise.resolve();
@@ -190,9 +194,39 @@ function backgroundUrl(environment) {
   return environment.background?.blob ? blobUrl(environment.background.blob) : "";
 }
 
+function spritePositionStyle(sprite, layer) {
+  return `left:${sprite.xPercent}%;top:${sprite.yPercent}%;width:${sprite.sizePercent}%;aspect-ratio:1;z-index:${layer + 1}`;
+}
+
 function spriteMarkup(sprite, layer) {
   const selected = sprite.id === editingEnvironment.selectedSpriteId;
-  return `<button class="editor-sprite ${selected ? "selected" : ""}" data-sprite-id="${sprite.id}" aria-label="${escapeHtml(sprite.name)}" aria-pressed="${selected}" style="left:${sprite.xPercent}%;top:${sprite.yPercent}%;width:${sprite.sizePercent}%;aspect-ratio:1;z-index:${layer + 1}"><img src="${blobUrl(sprite.image.blob)}" alt="${escapeHtml(sprite.name)}"></button>`;
+  return `<button class="editor-sprite ${selected ? "selected" : ""}" data-sprite-id="${sprite.id}" aria-label="${escapeHtml(sprite.name)}" aria-pressed="${selected}" style="${spritePositionStyle(sprite, layer)}"><img src="${blobUrl(sprite.image.blob)}" alt="${escapeHtml(sprite.name)}"></button>${spriteMenuAnchorMarkup(sprite, layer, selected)}`;
+}
+
+function spriteMenuAnchorMarkup(sprite, layer, selected) {
+  const open = sprite.id === spriteMenuOpenId;
+  return `<div class="sprite-menu-anchor ${selected ? "selected" : ""}" data-sprite-id="${sprite.id}" style="${spritePositionStyle(sprite, layer)}">
+    <button class="sprite-menu-trigger" type="button" aria-haspopup="menu" aria-expanded="${open}" aria-label="Sprite options for ${escapeHtml(sprite.name)}">⋮</button>
+    <div class="sprite-menu" role="menu" ${open ? "" : "hidden"}>${open ? spriteMenuBodyMarkup(sprite) : ""}</div>
+  </div>`;
+}
+
+function spriteMenuBodyMarkup(sprite) {
+  if (spriteMenuMode === "rename") {
+    return `<form class="sprite-rename-form">
+      <label>Sprite name<input name="name" value="${escapeHtml(sprite.name)}" required></label>
+      <button type="submit">Save name</button>
+    </form>`;
+  }
+  return `<ul class="sprite-menu-actions">
+    <li><button type="button" class="rename-sprite" role="menuitem">Rename</button></li>
+    <li><label class="replace-sprite-image file-picker" role="menuitem"><span>Replace image</span><input class="replace-sprite-image-file" aria-label="Replace image" type="file" accept="image/png,image/jpeg,image/webp"></label></li>
+    <li><button type="button" class="delete-sprite" role="menuitem">Delete</button></li>
+  </ul>`;
+}
+
+function spriteUndoMarkup() {
+  return `<p class="sprite-undo" role="alert">Sprite deleted. <button class="undo-delete-sprite" type="button">Undo</button></p>`;
 }
 
 function spriteNameFromFilename(filename) {
@@ -358,6 +392,7 @@ function renderEditor() {
       <button class="set-background" type="button">${editingEnvironment.background ? "Change background" : "Set background"}</button>
       <label class="add-sprite">Add sprite image<input class="sprite-file" aria-label="Add sprite image" type="file" accept="image/png,image/jpeg,image/webp"></label>
       ${spriteMessage ? `<p class="sprite-message" role="alert">${escapeHtml(spriteMessage)}</p>` : ""}
+      ${undoDeletedSprite ? spriteUndoMarkup() : ""}
       <p class="editor-next-step">${escapeHtml(draftGuidance(editingEnvironment))}</p>
     </section>
     ${recoveryGuidance()}
@@ -367,11 +402,13 @@ function renderEditor() {
   nameInput.focus();
   nameInput.select();
   nameInput.addEventListener("change", () => saveEnvironment({ ...editingEnvironment, name: nameInput.value }));
-  document.querySelector(".done-editing").addEventListener("click", () => { view = "library"; backgroundModalOpen = false; render(); });
+  document.querySelector(".done-editing").addEventListener("click", () => { view = "library"; backgroundModalOpen = false; spriteMenuOpenId = undefined; spriteMenuMode = "actions"; clearUndoState(); render(); });
   document.querySelector(".set-background").addEventListener("click", () => { backgroundModalOpen = true; backgroundMessage = ""; render(); });
   const spriteFile = document.querySelector(".sprite-file");
   spriteFile.addEventListener("change", () => addSpriteFromFile(spriteFile.files[0]));
   document.querySelectorAll(".editor-sprite").forEach(bindSpriteEvents);
+  document.querySelectorAll(".sprite-menu-anchor").forEach(bindSpriteMenuAnchor);
+  document.querySelector(".undo-delete-sprite")?.addEventListener("click", undoDeleteSprite);
   const canvas = document.querySelector(".activity-canvas");
   canvas.addEventListener("click", (event) => {
     if (event.target === canvas || event.target.matches(".activity-canvas > img, .activity-canvas > p")) deselectSprite();
@@ -397,15 +434,17 @@ function render() {
   renderActivity();
 }
 
+async function imageValidationError(file, validate) {
+  const error = validate(file);
+  if (error) return error;
+  if (!await imageCanDecode(file)) return "This image could not be opened. Choose a PNG, JPEG, or WebP image that is not damaged.";
+  return "";
+}
+
 async function addSpriteFromFile(file, position = { xPercent: 50, yPercent: 50 }) {
-  const error = validateImage(file);
+  const error = await imageValidationError(file, validateImage);
   if (error) {
     spriteMessage = error;
-    render();
-    return;
-  }
-  if (!await imageCanDecode(file)) {
-    spriteMessage = "This image could not be opened. Choose a PNG, JPEG, or WebP image that is not damaged.";
     render();
     return;
   }
@@ -447,18 +486,26 @@ function bringSpriteToFront(id, sprites = editingEnvironment.sprites || []) {
 }
 
 function showSelectedSprite(id) {
-  document.querySelectorAll(".editor-sprite").forEach((element) => {
-    const selected = element.dataset.spriteId === id;
-    const layer = editingEnvironment.sprites.findIndex((sprite) => sprite.id === element.dataset.spriteId);
-    element.classList.toggle("selected", selected);
-    element.setAttribute("aria-pressed", String(selected));
-    element.style.zIndex = layer + 1;
+  editingEnvironment.sprites.forEach((sprite, layer) => {
+    const selected = sprite.id === id;
+    const element = document.querySelector(`.editor-sprite[data-sprite-id="${CSS.escape(sprite.id)}"]`);
+    if (element) {
+      element.classList.toggle("selected", selected);
+      element.setAttribute("aria-pressed", String(selected));
+      element.style.zIndex = layer + 1;
+    }
+    const anchor = document.querySelector(`.sprite-menu-anchor[data-sprite-id="${CSS.escape(sprite.id)}"]`);
+    if (anchor) {
+      anchor.classList.toggle("selected", selected);
+      anchor.style.zIndex = layer + 1;
+    }
   });
 }
 
 function selectSprite(id) {
   const currentSprites = editingEnvironment.sprites || [];
   if (editingEnvironment.selectedSpriteId === id && currentSprites.at(-1)?.id === id) return;
+  if (editingEnvironment.selectedSpriteId !== id) closeSpriteMenu();
   const sprites = bringSpriteToFront(id, currentSprites);
   editingEnvironment = { ...editingEnvironment, sprites, selectedSpriteId: id };
   showSelectedSprite(id);
@@ -467,6 +514,7 @@ function selectSprite(id) {
 
 function deselectSprite() {
   if (!editingEnvironment.selectedSpriteId) return;
+  closeSpriteMenu();
   editingEnvironment = { ...editingEnvironment, selectedSpriteId: undefined };
   showSelectedSprite();
   saveEnvironment(editingEnvironment);
@@ -491,6 +539,11 @@ function showDraggedSprite(element, position) {
   element.style.left = `${position.xPercent}%`;
   element.style.top = `${position.yPercent}%`;
   showSelectedSprite(element.dataset.spriteId);
+  const anchor = document.querySelector(`.sprite-menu-anchor[data-sprite-id="${element.dataset.spriteId}"]`);
+  if (anchor) {
+    anchor.style.left = element.style.left;
+    anchor.style.top = element.style.top;
+  }
 }
 
 function dragStart(event, element, sprite, canvas) {
@@ -539,6 +592,146 @@ function bindSpriteEvents(element) {
   });
 }
 
+function bindSpriteMenuAnchor(anchor) {
+  const id = anchor.dataset.spriteId;
+  anchor.querySelector(".sprite-menu-trigger").addEventListener("click", (event) => {
+    event.stopPropagation();
+    toggleSpriteMenu(id);
+  });
+  bindSpriteMenuBody(anchor, id);
+}
+
+function bindSpriteMenuBody(anchor, id) {
+  anchor.querySelector(".rename-sprite")?.addEventListener("click", (event) => {
+    event.stopPropagation();
+    openSpriteRename(id);
+  });
+  anchor.querySelector(".delete-sprite")?.addEventListener("click", (event) => {
+    event.stopPropagation();
+    deleteSprite(id);
+  });
+  anchor.querySelector(".replace-sprite-image-file")?.addEventListener("click", (event) => event.stopPropagation());
+  anchor.querySelector(".replace-sprite-image-file")?.addEventListener("change", (event) => {
+    replaceSpriteImage(id, event.target.files[0]);
+  });
+  anchor.querySelector(".sprite-rename-form")?.addEventListener("submit", (event) => {
+    event.preventDefault();
+    event.stopPropagation();
+    submitSpriteRename(id, new FormData(event.currentTarget).get("name"));
+  });
+}
+
+function focusFirstSpriteMenuControl() {
+  document.querySelector(".sprite-menu-anchor.selected .sprite-menu:not([hidden]) input, .sprite-menu-anchor.selected .sprite-menu:not([hidden]) button")?.focus();
+}
+
+function updateSpriteMenuDom() {
+  document.querySelectorAll(".sprite-menu-anchor").forEach((anchor) => {
+    const id = anchor.dataset.spriteId;
+    const sprite = editingEnvironment.sprites.find((item) => item.id === id);
+    const open = id === spriteMenuOpenId && sprite;
+    const trigger = anchor.querySelector(".sprite-menu-trigger");
+    const menu = anchor.querySelector(".sprite-menu");
+    trigger.setAttribute("aria-expanded", String(Boolean(open)));
+    menu.hidden = !open;
+    menu.innerHTML = open ? spriteMenuBodyMarkup(sprite) : "";
+    if (open) bindSpriteMenuBody(anchor, id);
+  });
+}
+
+function toggleSpriteMenu(id) {
+  spriteMenuOpenId = spriteMenuOpenId === id ? undefined : id;
+  spriteMenuMode = "actions";
+  updateSpriteMenuDom();
+  if (spriteMenuOpenId) focusFirstSpriteMenuControl();
+}
+
+function closeSpriteMenu(returnFocus = false) {
+  if (!spriteMenuOpenId) return;
+  const id = spriteMenuOpenId;
+  spriteMenuOpenId = undefined;
+  spriteMenuMode = "actions";
+  updateSpriteMenuDom();
+  if (returnFocus) document.querySelector(`.sprite-menu-anchor[data-sprite-id="${CSS.escape(id)}"] .sprite-menu-trigger`)?.focus();
+}
+
+function openSpriteRename(id) {
+  spriteMenuOpenId = id;
+  spriteMenuMode = "rename";
+  updateSpriteMenuDom();
+  focusFirstSpriteMenuControl();
+}
+
+function updateSpriteNameDom(id, name) {
+  const button = document.querySelector(`.editor-sprite[data-sprite-id="${CSS.escape(id)}"]`);
+  button?.setAttribute("aria-label", name);
+  if (button?.querySelector("img")) button.querySelector("img").alt = name;
+  const trigger = document.querySelector(`.sprite-menu-anchor[data-sprite-id="${CSS.escape(id)}"] .sprite-menu-trigger`);
+  trigger?.setAttribute("aria-label", `Sprite options for ${name}`);
+}
+
+function submitSpriteRename(id, rawName) {
+  const name = (rawName || "").trim();
+  if (!name) {
+    spriteMessage = "Sprite name can't be empty.";
+    render();
+    return;
+  }
+  spriteMessage = "";
+  editingEnvironment = {
+    ...editingEnvironment,
+    sprites: editingEnvironment.sprites.map((sprite) => sprite.id === id ? { ...sprite, name } : sprite),
+  };
+  updateSpriteNameDom(id, name);
+  closeSpriteMenu();
+  saveEnvironment(editingEnvironment);
+}
+
+async function replaceSpriteImage(id, file) {
+  const error = await imageValidationError(file, validateImage);
+  if (error) {
+    spriteMessage = error;
+    render();
+    return;
+  }
+  spriteMessage = "";
+  spriteMenuOpenId = undefined;
+  spriteMenuMode = "actions";
+  const sprites = editingEnvironment.sprites.map((sprite) => sprite.id === id ? { ...sprite, image: { blob: file.slice(0, file.size, file.type) } } : sprite);
+  await saveEnvironment({ ...editingEnvironment, sprites }, false, true);
+}
+
+function deleteSprite(id) {
+  const index = editingEnvironment.sprites.findIndex((sprite) => sprite.id === id);
+  if (index === -1) return;
+  const sprite = editingEnvironment.sprites[index];
+  const sprites = editingEnvironment.sprites.filter((item) => item.id !== id);
+  spriteMenuOpenId = undefined;
+  spriteMenuMode = "actions";
+  clearTimeout(undoTimeoutId);
+  undoDeletedSprite = { sprite, index };
+  saveEnvironment({ ...editingEnvironment, sprites, selectedSpriteId: undefined }, false, true);
+  undoTimeoutId = window.setTimeout(() => {
+    undoDeletedSprite = undefined;
+    if (view === "editor") render();
+  }, 8000);
+}
+
+function undoDeleteSprite() {
+  if (!undoDeletedSprite) return;
+  clearTimeout(undoTimeoutId);
+  const { sprite, index } = undoDeletedSprite;
+  undoDeletedSprite = undefined;
+  const sprites = [...editingEnvironment.sprites];
+  sprites.splice(index, 0, sprite);
+  saveEnvironment({ ...editingEnvironment, sprites, selectedSpriteId: sprite.id }, false, true);
+}
+
+function clearUndoState() {
+  clearTimeout(undoTimeoutId);
+  undoDeletedSprite = undefined;
+}
+
 function validateImage(file) {
   if (!file) return "Choose an image to continue.";
   if (!["image/png", "image/jpeg", "image/webp"].includes(file.type)) {
@@ -567,14 +760,9 @@ function imageCanDecode(file) {
 }
 
 async function selectBackground(file) {
-  const error = validateBackground(file);
+  const error = await imageValidationError(file, validateBackground);
   if (error) {
     backgroundMessage = error;
-    render();
-    return;
-  }
-  if (!await imageCanDecode(file)) {
-    backgroundMessage = "This image could not be opened. Choose a PNG, JPEG, or WebP image that is not damaged.";
     render();
     return;
   }
@@ -635,6 +823,9 @@ function openEditor(id) {
   editingEnvironment = environments.find((environment) => environment.id === id);
   if (!editingEnvironment) return;
   view = "editor";
+  spriteMenuOpenId = undefined;
+  spriteMenuMode = "actions";
+  clearUndoState();
   render();
 }
 
@@ -678,6 +869,19 @@ async function saveEnvironment(environment, openAfterSave = false, renderEditorA
     updateSaveGuidance();
   } else render();
 }
+
+// Bound once at module scope (unlike the render-scoped listeners above): `document` itself is
+// never replaced by a render, so a listener bound inside renderEditor() would duplicate on
+// every render instead of being cleaned up with the rest of the editor markup.
+document.addEventListener("click", (event) => {
+  if (view === "editor" && spriteMenuOpenId && !event.target.closest(".sprite-menu-anchor")) closeSpriteMenu();
+});
+document.addEventListener("focusin", (event) => {
+  if (view === "editor" && spriteMenuOpenId && !event.target.closest(".sprite-menu-anchor")) closeSpriteMenu();
+});
+document.addEventListener("keydown", (event) => {
+  if (view === "editor" && spriteMenuOpenId && event.key === "Escape") closeSpriteMenu(true);
+});
 
 async function start() {
   await loadEnvironments();
