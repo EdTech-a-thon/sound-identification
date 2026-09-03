@@ -46,10 +46,12 @@ let spriteMenuOpenId;
 let spriteMenuMode = "actions";
 let undoDeletedSprite;
 let undoTimeoutId;
+let soundFlow;
 const renderObjectUrls = new Set();
 const defaultSpriteSizePercent = 14;
 const minSpriteSizePercent = 4;
 const maxSpriteSizePercent = 60;
+const acceptedAudioTypes = ["audio/mpeg", "audio/wav", "audio/x-wav", "audio/mp4", "audio/x-m4a"];
 let pendingEnvironmentSave = Promise.resolve();
 
 function target(object, label, classes) {
@@ -235,9 +237,11 @@ function spriteMenuBodyMarkup(sprite) {
       <button type="submit">Save name</button>
     </form>`;
   }
+  const soundLabel = sprite.sound ? "Replace sound" : "Add sound";
   return `<ul class="sprite-menu-actions">
     <li><button type="button" class="rename-sprite" role="menuitem">Rename</button></li>
     <li><label class="replace-sprite-image file-picker" role="menuitem"><span>Replace image</span><input class="replace-sprite-image-file" aria-label="Replace image" type="file" accept="image/png,image/jpeg,image/webp"></label></li>
+    <li><label class="attach-sprite-sound file-picker" role="menuitem"><span>${soundLabel}</span><input class="attach-sprite-sound-file" aria-label="${soundLabel}" type="file" accept="${acceptedAudioTypes.join(",")}"></label></li>
     <li><button type="button" class="delete-sprite" role="menuitem">Delete</button></li>
   </ul>`;
 }
@@ -256,11 +260,16 @@ function clearRenderObjectUrls() {
   renderObjectUrls.clear();
 }
 
+function isPlayable(environment) {
+  return Boolean(environment.name.trim() && environment.background && (environment.sprites || []).some((sprite) => sprite.sound));
+}
+
 function draftGuidance(environment) {
+  if (isPlayable(environment)) return "This environment is ready to play.";
   const missing = [];
   if (!environment.name.trim()) missing.push("a name");
   if (!environment.background) missing.push("a background");
-  missing.push("at least one sprite with a sound");
+  if (!(environment.sprites || []).some((sprite) => sprite.sound)) missing.push("at least one sprite with a sound");
   return `This draft needs ${missing.join(", ")} before it can be played.`;
 }
 
@@ -296,7 +305,7 @@ function removeBackgroundConfirmation() {
 function backgroundModal() {
   if (!backgroundModalOpen) return "";
   const removeButton = editingEnvironment.background
-    ? `<div class="background-actions"><button class="remove-background" type="button">Remove background</button></div>`
+    ? `<div class="modal-actions"><button class="remove-background" type="button">Remove background</button></div>`
     : "";
   return `<div class="modal-backdrop">
     <section class="background-modal" role="dialog" aria-modal="true" aria-labelledby="background-modal-title">
@@ -312,6 +321,37 @@ function backgroundModal() {
       ${removeButton}
       ${replaceBackgroundConfirmation()}
       ${removeBackgroundConfirmation()}
+    </section>
+  </div>`;
+}
+
+function soundFlowModal() {
+  if (!soundFlow) return "";
+  if (soundFlow.stage === "confirm-replace") {
+    return `<div class="modal-backdrop">
+      <section class="sound-modal" role="dialog" aria-modal="true" aria-labelledby="replace-sound-title">
+        <button class="close-sound-flow close-modal" type="button" aria-label="Close">×</button>
+        <p class="eyebrow">SPRITE SOUND</p>
+        <h2 id="replace-sound-title">Replace this sound?</h2>
+        <p class="modal-copy">This sprite already has a sound attached. Replacing it will remove the current one.</p>
+        <div class="modal-actions">
+          <button class="cancel-sound-flow" type="button">Cancel</button>
+          <button class="confirm-replace-sound" type="button">Replace sound</button>
+        </div>
+      </section>
+    </div>`;
+  }
+  return `<div class="modal-backdrop">
+    <section class="sound-modal" role="dialog" aria-modal="true" aria-labelledby="label-sound-title">
+      <button class="close-sound-flow close-modal" type="button" aria-label="Close">×</button>
+      <p class="eyebrow">SPRITE SOUND</p>
+      <h2 id="label-sound-title">Label this sound</h2>
+      <audio class="sound-preview" controls src="${blobUrl(soundFlow.file)}"></audio>
+      ${soundFlow.error ? `<p class="sprite-message" role="alert">${escapeHtml(soundFlow.error)}</p>` : ""}
+      <form class="sound-label-form sound-form">
+        <label>Sound label<input name="label" value="${escapeHtml(soundFlow.label)}" required></label>
+        <button class="save-sound" type="submit">${soundFlow.replacing ? "Replace sound" : "Add sound"}</button>
+      </form>
     </section>
   </div>`;
 }
@@ -349,6 +389,7 @@ function starterCard(name, state, description) {
 
 function userEnvironmentCard(environment) {
   const name = environment.name || "Untitled environment";
+  const playable = isPlayable(environment);
   const thumbnail = environment.background
     ? `<img class="environment-thumbnail image-thumbnail" src="${backgroundUrl(environment)}" alt="Background for ${escapeHtml(name)}">`
     : `<div class="environment-thumbnail draft-thumbnail" aria-hidden="true">Draft</div>`;
@@ -358,7 +399,7 @@ function userEnvironmentCard(environment) {
       <p class="card-kicker">Saved on this device</p>
       <h2>${escapeHtml(name)}</h2>
       <p>${escapeHtml(draftGuidance(environment))}</p>
-      <span class="environment-status draft">Draft</span>
+      <span class="environment-status ${playable ? "ready" : "draft"}">${playable ? "Ready to play" : "Draft"}</span>
     </div>
     <button class="edit-environment" data-environment-id="${environment.id}" type="button">Edit</button>
   </article>`;
@@ -414,12 +455,13 @@ function renderEditor() {
     </section>
     ${recoveryGuidance()}
     ${backgroundModal()}
+    ${soundFlowModal()}
   </main>`;
   const nameInput = document.querySelector("#environment-name");
   nameInput.focus();
   nameInput.select();
   nameInput.addEventListener("change", () => saveEnvironment({ ...editingEnvironment, name: nameInput.value }));
-  document.querySelector(".done-editing").addEventListener("click", () => { view = "library"; backgroundModalOpen = false; spriteMenuOpenId = undefined; spriteMenuMode = "actions"; clearUndoState(); render(); });
+  document.querySelector(".done-editing").addEventListener("click", () => { view = "library"; backgroundModalOpen = false; soundFlow = undefined; spriteMenuOpenId = undefined; spriteMenuMode = "actions"; clearUndoState(); render(); });
   document.querySelector(".set-background").addEventListener("click", () => { backgroundModalOpen = true; backgroundMessage = ""; render(); });
   const spriteFile = document.querySelector(".sprite-file");
   spriteFile.addEventListener("change", () => addSpriteFromFile(spriteFile.files[0]));
@@ -440,7 +482,26 @@ function renderEditor() {
       render();
       return;
     }
+    if (file.type.startsWith("audio/")) {
+      // Sprites render as three sibling overlays sharing one data-sprite-id (the button, its
+      // three-dot menu, and its resize/rotate handles) — match any of them, not just the button.
+      const targetSprite = event.target.closest("[data-sprite-id]");
+      if (!targetSprite || targetSprite.dataset.spriteId !== editingEnvironment.selectedSpriteId) {
+        spriteMessage = "Drop the sound onto a sprite to attach it.";
+        render();
+        return;
+      }
+      beginAttachSound(targetSprite.dataset.spriteId, file);
+      return;
+    }
     addSpriteFromFile(file, dropPosition(event, canvas));
+  });
+  document.querySelector(".close-sound-flow")?.addEventListener("click", cancelSoundFlow);
+  document.querySelector(".cancel-sound-flow")?.addEventListener("click", cancelSoundFlow);
+  document.querySelector(".confirm-replace-sound")?.addEventListener("click", confirmReplaceSound);
+  document.querySelector(".sound-label-form")?.addEventListener("submit", (event) => {
+    event.preventDefault();
+    submitSoundLabel(new FormData(event.currentTarget).get("label"));
   });
   bindBackgroundModal();
 }
@@ -770,6 +831,11 @@ function bindSpriteMenuBody(anchor, id) {
   anchor.querySelector(".replace-sprite-image-file")?.addEventListener("change", (event) => {
     replaceSpriteImage(id, event.target.files[0]);
   });
+  anchor.querySelector(".attach-sprite-sound-file")?.addEventListener("click", (event) => event.stopPropagation());
+  anchor.querySelector(".attach-sprite-sound-file")?.addEventListener("change", (event) => {
+    closeSpriteMenu();
+    beginAttachSound(id, event.target.files[0]);
+  });
   anchor.querySelector(".sprite-rename-form")?.addEventListener("submit", (event) => {
     event.preventDefault();
     event.stopPropagation();
@@ -901,18 +967,84 @@ function validateBackground(file) {
   return validateImage(file);
 }
 
-function imageCanDecode(file) {
+function mediaCanDecode(element, successEvent, file) {
   return new Promise((resolve) => {
-    const image = new Image();
     const url = URL.createObjectURL(file);
     const finish = (canDecode) => {
       URL.revokeObjectURL(url);
       resolve(canDecode);
     };
-    image.onload = () => finish(true);
-    image.onerror = () => finish(false);
-    image.src = url;
+    element.addEventListener(successEvent, () => finish(true), { once: true });
+    element.addEventListener("error", () => finish(false), { once: true });
+    element.src = url;
   });
+}
+
+function imageCanDecode(file) {
+  return mediaCanDecode(new Image(), "load", file);
+}
+
+function validateAudio(file) {
+  if (!file) return "Choose an audio file to continue.";
+  if (!acceptedAudioTypes.includes(file.type)) return "Choose an MP3, WAV, or M4A audio file.";
+  if (file.size > 20 * 1024 * 1024) return "Choose an audio file smaller than 20 MB.";
+  return "";
+}
+
+function audioCanDecode(file) {
+  return mediaCanDecode(new Audio(), "loadedmetadata", file);
+}
+
+async function audioValidationError(file) {
+  const error = validateAudio(file);
+  if (error) return error;
+  if (!await audioCanDecode(file)) return "This audio could not be opened. Choose an MP3, WAV, or M4A file that is not damaged.";
+  return "";
+}
+
+async function beginAttachSound(spriteId, file) {
+  const error = await audioValidationError(file);
+  if (error) {
+    spriteMessage = error;
+    render();
+    return;
+  }
+  spriteMessage = "";
+  const sprite = editingEnvironment.sprites.find((item) => item.id === spriteId);
+  const hasSound = Boolean(sprite?.sound);
+  soundFlow = {
+    spriteId,
+    file,
+    label: spriteNameFromFilename(file.name),
+    replacing: hasSound,
+    stage: hasSound ? "confirm-replace" : "label",
+  };
+  render();
+}
+
+function cancelSoundFlow() {
+  soundFlow = undefined;
+  render();
+}
+
+function confirmReplaceSound() {
+  soundFlow = { ...soundFlow, stage: "label" };
+  render();
+}
+
+async function submitSoundLabel(rawLabel) {
+  const label = (rawLabel || "").trim();
+  if (!label) {
+    soundFlow = { ...soundFlow, error: "Sound label can't be empty." };
+    render();
+    return;
+  }
+  const { spriteId, file } = soundFlow;
+  const sprites = editingEnvironment.sprites.map((sprite) => sprite.id === spriteId
+    ? { ...sprite, sound: { blob: file.slice(0, file.size, file.type), label } }
+    : sprite);
+  soundFlow = undefined;
+  await saveEnvironment({ ...editingEnvironment, sprites }, false, true);
 }
 
 async function selectBackground(file) {
@@ -981,6 +1113,7 @@ function openEditor(id) {
   view = "editor";
   spriteMenuOpenId = undefined;
   spriteMenuMode = "actions";
+  soundFlow = undefined;
   clearUndoState();
   render();
 }

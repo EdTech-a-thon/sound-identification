@@ -9,6 +9,17 @@ const validImage = (name = "background.png", mimeType = "image/png") => ({
   ),
 });
 
+// A minimal, real, decodable WAV file (100ms of silence) so the browser's real <audio> decode
+// check genuinely succeeds, the same way validImage() above is a real, decodable PNG.
+const validAudio = (name = "chirp.mp3", mimeType = "audio/mpeg") => ({
+  name,
+  mimeType,
+  buffer: Buffer.from(
+    "UklGRkQDAABXQVZFZm10IBAAAAABAAEAQB8AAEAfAAABAAgAZGF0YSADAACAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgA==",
+    "base64",
+  ),
+});
+
 async function spriteRotation(page, name) {
   return page.getByRole("button", { name, exact: true }).evaluate((el) => {
     const transform = getComputedStyle(el).transform;
@@ -529,6 +540,7 @@ test("the sprite menu can be opened and its actions triggered with the keyboard 
 
   await page.keyboard.press("Tab");
   await page.keyboard.press("Tab");
+  await page.keyboard.press("Tab");
   await expect(page.getByRole("menuitem", { name: "Delete" })).toBeFocused();
   await page.keyboard.press("Enter");
 
@@ -669,4 +681,154 @@ test("shows failed guidance when storage becomes unavailable before saving", asy
 
   await expect(page.getByRole("status")).toHaveText("Could not save on this device");
   await expect(page.getByRole("alert")).toHaveText(/could not be saved on this device/i);
+});
+
+test("an educator can attach a sound through the sprite menu with an editable, prefilled label, and it persists", async ({ page }) => {
+  await page.goto("/");
+  await page.getByRole("button", { name: "Environments" }).click();
+  await page.getByRole("button", { name: "Create environment" }).click();
+  await page.getByLabel("Add sprite image").setInputFiles(validImage("wind_chime.png"));
+  await expect(page.getByRole("button", { name: "Wind Chime", exact: true })).toBeVisible();
+  await expect(page.getByRole("status")).toHaveText("Saved on this device");
+
+  await page.getByRole("button", { name: "Sprite options for Wind Chime" }).click();
+  await expect(page.getByRole("menuitem", { name: "Add sound" })).toBeVisible();
+  await page.getByLabel("Add sound").setInputFiles(validAudio("gentle_chime_ring.mp3"));
+
+  await expect(page.getByRole("heading", { name: "Label this sound" })).toBeVisible();
+  const labelField = page.getByLabel("Sound label");
+  await expect(labelField).toHaveValue("Gentle Chime Ring");
+  await labelField.fill("Wind chime ringing");
+  await page.getByRole("button", { name: "Add sound" }).click();
+
+  await expect(page.getByRole("heading", { name: "Label this sound" })).toHaveCount(0);
+  await expect(page.getByRole("status")).toHaveText("Saved on this device");
+  await page.getByRole("button", { name: "Sprite options for Wind Chime" }).click();
+  await expect(page.getByRole("menuitem", { name: "Replace sound" })).toBeVisible();
+
+  await page.getByRole("button", { name: "Done" }).click();
+  await page.reload();
+  await page.getByRole("button", { name: "Environments" }).click();
+  await page.getByRole("button", { name: "Edit" }).click();
+  await page.getByRole("button", { name: "Sprite options for Wind Chime" }).click();
+  await expect(page.getByRole("menuitem", { name: "Replace sound" })).toBeVisible();
+});
+
+test("dropping a sound onto the selected sprite attaches it; dropping elsewhere is rejected with guidance", async ({ page }) => {
+  await page.goto("/");
+  await page.getByRole("button", { name: "Environments" }).click();
+  await page.getByRole("button", { name: "Create environment" }).click();
+  await page.getByLabel("Add sprite image").setInputFiles(validImage("music_box.png"));
+  await expect(page.getByRole("button", { name: "Music Box", exact: true })).toBeVisible();
+  await expect(page.getByRole("status")).toHaveText("Saved on this device");
+
+  await page.locator(".activity-canvas").evaluate((canvas) => {
+    const dataTransfer = new DataTransfer();
+    dataTransfer.items.add(new File([Uint8Array.from(atob("UklGRkQDAABXQVZFZm10IBAAAAABAAEAQB8AAEAfAAABAAgAZGF0YSADAACAgA=="), (c) => c.charCodeAt(0))], "off_target.mp3", { type: "audio/mpeg" }));
+    canvas.dispatchEvent(new DragEvent("drop", { bubbles: true, dataTransfer }));
+  });
+  await expect(page.getByRole("alert")).toHaveText("Drop the sound onto a sprite to attach it.");
+
+  const sprite = page.getByRole("button", { name: "Music Box", exact: true });
+  await sprite.evaluate((element, audioBase64) => {
+    const dataTransfer = new DataTransfer();
+    dataTransfer.items.add(new File([Uint8Array.from(atob(audioBase64), (c) => c.charCodeAt(0))], "music_box_melody.mp3", { type: "audio/mpeg" }));
+    element.dispatchEvent(new DragEvent("drop", { bubbles: true, dataTransfer }));
+  }, "UklGRkQDAABXQVZFZm10IBAAAAABAAEAQB8AAEAfAAABAAgAZGF0YSADAACAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgA==");
+
+  await expect(page.getByRole("heading", { name: "Label this sound" })).toBeVisible();
+  await expect(page.getByLabel("Sound label")).toHaveValue("Music Box Melody");
+
+  // A drop landing on the sprite's resize/rotate overlay (a DOM sibling of the sprite button,
+  // not a descendant) must still count as "dropped on the selected sprite."
+  await page.getByRole("button", { name: "Close" }).click();
+  await expect(page.getByRole("heading", { name: "Label this sound" })).toHaveCount(0);
+  const resizeHandle = page.locator(".sprite-transform-handles.selected .handle-se");
+  await resizeHandle.evaluate((element, audioBase64) => {
+    const dataTransfer = new DataTransfer();
+    dataTransfer.items.add(new File([Uint8Array.from(atob(audioBase64), (c) => c.charCodeAt(0))], "handle_drop.mp3", { type: "audio/mpeg" }));
+    element.dispatchEvent(new DragEvent("drop", { bubbles: true, dataTransfer }));
+  }, validAudio().buffer.toString("base64"));
+  await expect(page.getByRole("heading", { name: "Label this sound" })).toBeVisible();
+});
+
+test("unsupported, oversized, and damaged audio receive friendly guidance", async ({ page }) => {
+  await page.goto("/");
+  await page.getByRole("button", { name: "Environments" }).click();
+  await page.getByRole("button", { name: "Create environment" }).click();
+  await page.getByLabel("Add sprite image").setInputFiles(validImage("clock_tower.png"));
+  await expect(page.getByRole("button", { name: "Clock Tower", exact: true })).toBeVisible();
+  await expect(page.getByRole("status")).toHaveText("Saved on this device");
+
+  await page.getByRole("button", { name: "Sprite options for Clock Tower" }).click();
+  const picker = page.getByLabel("Add sound");
+  await picker.setInputFiles({ name: "notes.txt", mimeType: "text/plain", buffer: Buffer.from("not audio") });
+  await expect(page.getByRole("alert")).toHaveText("Choose an MP3, WAV, or M4A audio file.");
+
+  await page.getByRole("button", { name: "Sprite options for Clock Tower" }).click();
+  await page.getByLabel("Add sound").setInputFiles({ name: "huge.mp3", mimeType: "audio/mpeg", buffer: Buffer.alloc(20 * 1024 * 1024 + 1) });
+  await expect(page.getByRole("alert")).toHaveText("Choose an audio file smaller than 20 MB.");
+
+  await page.getByRole("button", { name: "Sprite options for Clock Tower" }).click();
+  await page.getByLabel("Add sound").setInputFiles({ name: "broken.mp3", mimeType: "audio/mpeg", buffer: Buffer.from("these bytes are not audio") });
+  await expect(page.getByRole("alert")).toHaveText(/audio could not be opened/i);
+});
+
+test("replacing an existing sprite sound requires confirmation", async ({ page }) => {
+  await page.goto("/");
+  await page.getByRole("button", { name: "Environments" }).click();
+  await page.getByRole("button", { name: "Create environment" }).click();
+  await page.getByLabel("Add sprite image").setInputFiles(validImage("bell_tower.png"));
+  await expect(page.getByRole("button", { name: "Bell Tower", exact: true })).toBeVisible();
+  await expect(page.getByRole("status")).toHaveText("Saved on this device");
+
+  await page.getByRole("button", { name: "Sprite options for Bell Tower" }).click();
+  await page.getByLabel("Add sound").setInputFiles(validAudio("first_ring.mp3"));
+  await page.getByRole("button", { name: "Add sound" }).click();
+  await expect(page.getByRole("status")).toHaveText("Saved on this device");
+
+  await page.getByRole("button", { name: "Sprite options for Bell Tower" }).click();
+  await page.getByLabel("Replace sound").setInputFiles(validAudio("second_ring.mp3"));
+  await expect(page.getByRole("heading", { name: "Replace this sound?" })).toBeVisible();
+  await page.getByRole("button", { name: "Cancel" }).click();
+  await expect(page.getByRole("heading", { name: "Replace this sound?" })).toHaveCount(0);
+  await expect(page.getByRole("heading", { name: "Label this sound" })).toHaveCount(0);
+
+  await page.getByRole("button", { name: "Sprite options for Bell Tower" }).click();
+  await page.getByLabel("Replace sound").setInputFiles(validAudio("second_ring.mp3"));
+  await page.getByRole("button", { name: "Replace sound" }).click();
+  await expect(page.getByRole("heading", { name: "Label this sound" })).toBeVisible();
+  await expect(page.getByLabel("Sound label")).toHaveValue("Second Ring");
+  await page.getByRole("button", { name: "Replace sound" }).click();
+  await expect(page.getByRole("status")).toHaveText("Saved on this device");
+});
+
+test("an environment becomes playable once it has a name, a background, and a sprite with a sound", async ({ page }) => {
+  await page.goto("/");
+  await page.getByRole("button", { name: "Environments" }).click();
+  await page.getByRole("button", { name: "Create environment" }).click();
+  await page.getByLabel("Environment name").fill("Backyard sounds");
+  await page.getByLabel("Environment name").press("Tab");
+  await expect(page.getByRole("status")).toHaveText("Saved on this device");
+  await expect(page.getByText(/This draft needs a background, at least one sprite with a sound/i)).toBeVisible();
+
+  await page.getByRole("button", { name: "Set background" }).click();
+  await page.getByLabel("Choose background image").setInputFiles(validImage("yard.png"));
+  await page.getByRole("button", { name: "Close" }).click();
+  await expect(page.getByText(/This draft needs at least one sprite with a sound/i)).toBeVisible();
+
+  await page.getByLabel("Add sprite image").setInputFiles(validImage("cricket.png"));
+  await expect(page.getByRole("button", { name: "Cricket", exact: true })).toBeVisible();
+  await expect(page.getByText(/This draft needs at least one sprite with a sound/i)).toBeVisible();
+
+  await page.getByRole("button", { name: "Sprite options for Cricket" }).click();
+  await page.getByLabel("Add sound").setInputFiles(validAudio("cricket_chirp.mp3"));
+  await page.getByRole("button", { name: "Add sound" }).click();
+  await expect(page.getByRole("status")).toHaveText("Saved on this device");
+  await expect(page.getByText("This environment is ready to play.")).toBeVisible();
+
+  await page.getByRole("button", { name: "Done" }).click();
+  const card = page.locator("article", { has: page.getByRole("heading", { name: "Backyard sounds" }) });
+  await expect(card.getByText("Ready to play", { exact: true })).toBeVisible();
+  await expect(card.getByText("Draft", { exact: true })).toHaveCount(0);
 });

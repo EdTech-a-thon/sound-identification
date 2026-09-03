@@ -262,7 +262,7 @@ header p:not(.eyebrow) { margin:10px 0 0; color:#6b7f82; font-size:15px; }.headi
 .background-drop-zone span { color:#35675d; text-decoration:underline; }
 .background-drop-zone input { position:absolute; width:1px; height:1px; overflow:hidden; opacity:0; }
 .background-message { margin:12px 0 0; padding:9px; border-radius:7px; color:#984a42; background:#fae3df; font-size:12px; }
-.background-actions { margin-top:14px; }
+.modal-actions { margin-top:14px; }
 .remove-background,
 .cancel-background-confirmation,
 .confirm-remove-background,
