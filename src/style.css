@@ -151,7 +151,6 @@ header p:not(.eyebrow) { margin:10px 0 0; color:#6b7f82; font-size:15px; }.headi
   padding:4px;
   border:2px solid transparent;
   background:transparent;
-  transform:translate(-50%,-50%);
   cursor:move;
 }
 .editor-sprite.selected { border-color:#1976d2; outline:2px solid #1976d255; }
@@ -160,7 +159,7 @@ header p:not(.eyebrow) { margin:10px 0 0; color:#6b7f82; font-size:15px; }.headi
 .sprite-menu-anchor:not(.selected) { display:none; }
 .sprite-menu-trigger {
   position:absolute;
-  top:0;
+  top:50%;
   right:0;
   transform:translate(50%,-50%);
   display:grid;
@@ -178,7 +177,7 @@ header p:not(.eyebrow) { margin:10px 0 0; color:#6b7f82; font-size:15px; }.headi
   cursor:pointer;
   pointer-events:auto;
 }
-.sprite-menu { position:absolute; top:28px; right:-8px; z-index:1; min-width:170px; padding:6px; border-radius:8px; background:#fff; box-shadow:0 10px 30px #19323850; pointer-events:auto; }
+.sprite-menu { position:absolute; top:calc(50% - 10px); left:calc(100% + 6px); z-index:1; min-width:170px; padding:6px; border-radius:8px; background:#fff; box-shadow:0 10px 30px #19323850; pointer-events:auto; }
 .sprite-menu[hidden] { display:none; }
 .sprite-menu-actions { display:grid; gap:2px; margin:0; padding:0; list-style:none; }
 .sprite-menu button, .sprite-menu .file-picker span {
@@ -196,6 +195,37 @@ header p:not(.eyebrow) { margin:10px 0 0; color:#6b7f82; font-size:15px; }.headi
 }
 .sprite-menu button:hover, .sprite-menu .file-picker span:hover { background:#f1f5ef; }
 .sprite-menu .delete-sprite { color:#b75f54; }
+.sprite-transform-handles { position:absolute; pointer-events:none; }
+.sprite-transform-handles:not(.selected) { display:none; }
+.resize-handle {
+  position:absolute;
+  width:12px;
+  height:12px;
+  border:2px solid #1976d2;
+  border-radius:50%;
+  background:#fff;
+  pointer-events:auto;
+  touch-action:none;
+}
+.resize-handle.handle-nw { top:0; left:0; transform:translate(-50%,-50%); cursor:nwse-resize; }
+.resize-handle.handle-ne { top:0; right:0; transform:translate(50%,-50%); cursor:nesw-resize; }
+.resize-handle.handle-sw { bottom:0; left:0; transform:translate(-50%,50%); cursor:nesw-resize; }
+.resize-handle.handle-se { bottom:0; right:0; transform:translate(50%,50%); cursor:nwse-resize; }
+.rotate-stem { position:absolute; left:50%; top:0; width:2px; height:26px; background:#1976d2; transform:translate(-50%,-100%); pointer-events:none; }
+.rotate-handle {
+  position:absolute;
+  left:50%;
+  top:0;
+  width:14px;
+  height:14px;
+  border:2px solid #1976d2;
+  border-radius:50%;
+  background:#fff;
+  transform:translate(-50%,calc(-100% - 26px));
+  cursor:grab;
+  pointer-events:auto;
+  touch-action:none;
+}
 .sprite-menu .file-picker input { position:absolute; width:1px; height:1px; overflow:hidden; opacity:0; }
 .sprite-rename-form { display:grid; gap:8px; padding:4px; }
 .sprite-rename-form label { display:grid; gap:5px; color:#496369; font-size:11px; font-weight:700; }

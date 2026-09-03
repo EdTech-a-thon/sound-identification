@@ -48,6 +48,8 @@ let undoDeletedSprite;
 let undoTimeoutId;
 const renderObjectUrls = new Set();
 const defaultSpriteSizePercent = 14;
+const minSpriteSizePercent = 4;
+const maxSpriteSizePercent = 60;
 let pendingEnvironmentSave = Promise.resolve();
 
 function target(object, label, classes) {
@@ -198,9 +200,24 @@ function spritePositionStyle(sprite, layer) {
   return `left:${sprite.xPercent}%;top:${sprite.yPercent}%;width:${sprite.sizePercent}%;aspect-ratio:1;z-index:${layer + 1}`;
 }
 
+function spriteRotationTransform(sprite) {
+  return `translate(-50%,-50%) rotate(${sprite.rotationDegrees || 0}deg)`;
+}
+
 function spriteMarkup(sprite, layer) {
   const selected = sprite.id === editingEnvironment.selectedSpriteId;
-  return `<button class="editor-sprite ${selected ? "selected" : ""}" data-sprite-id="${sprite.id}" aria-label="${escapeHtml(sprite.name)}" aria-pressed="${selected}" style="${spritePositionStyle(sprite, layer)}"><img src="${blobUrl(sprite.image.blob)}" alt="${escapeHtml(sprite.name)}"></button>${spriteMenuAnchorMarkup(sprite, layer, selected)}`;
+  return `<button class="editor-sprite ${selected ? "selected" : ""}" data-sprite-id="${sprite.id}" aria-label="${escapeHtml(sprite.name)}" aria-pressed="${selected}" style="${spritePositionStyle(sprite, layer)};transform:${spriteRotationTransform(sprite)}"><img src="${blobUrl(sprite.image.blob)}" alt="${escapeHtml(sprite.name)}"></button>${spriteMenuAnchorMarkup(sprite, layer, selected)}${spriteTransformHandlesMarkup(sprite, layer, selected)}`;
+}
+
+function spriteTransformHandlesMarkup(sprite, layer, selected) {
+  return `<div class="sprite-transform-handles ${selected ? "selected" : ""}" data-sprite-id="${sprite.id}" style="${spritePositionStyle(sprite, layer)};transform:${spriteRotationTransform(sprite)}">
+    <div class="resize-handle handle-nw" data-corner="nw" title="Drag to resize"></div>
+    <div class="resize-handle handle-ne" data-corner="ne" title="Drag to resize"></div>
+    <div class="resize-handle handle-sw" data-corner="sw" title="Drag to resize"></div>
+    <div class="resize-handle handle-se" data-corner="se" title="Drag to resize"></div>
+    <div class="rotate-stem"></div>
+    <div class="rotate-handle" title="Drag to rotate"></div>
+  </div>`;
 }
 
 function spriteMenuAnchorMarkup(sprite, layer, selected) {
@@ -408,6 +425,7 @@ function renderEditor() {
   spriteFile.addEventListener("change", () => addSpriteFromFile(spriteFile.files[0]));
   document.querySelectorAll(".editor-sprite").forEach(bindSpriteEvents);
   document.querySelectorAll(".sprite-menu-anchor").forEach(bindSpriteMenuAnchor);
+  document.querySelectorAll(".sprite-transform-handles").forEach(bindSpriteTransformHandles);
   document.querySelector(".undo-delete-sprite")?.addEventListener("click", undoDeleteSprite);
   const canvas = document.querySelector(".activity-canvas");
   canvas.addEventListener("click", (event) => {
@@ -485,20 +503,29 @@ function bringSpriteToFront(id, sprites = editingEnvironment.sprites || []) {
   return selected ? [...sprites.filter((sprite) => sprite.id !== id), selected] : sprites;
 }
 
+function overlayElements(id) {
+  const escaped = CSS.escape(id);
+  return {
+    button: document.querySelector(`.editor-sprite[data-sprite-id="${escaped}"]`),
+    menuAnchor: document.querySelector(`.sprite-menu-anchor[data-sprite-id="${escaped}"]`),
+    transformHandles: document.querySelector(`.sprite-transform-handles[data-sprite-id="${escaped}"]`),
+  };
+}
+
 function showSelectedSprite(id) {
   editingEnvironment.sprites.forEach((sprite, layer) => {
     const selected = sprite.id === id;
-    const element = document.querySelector(`.editor-sprite[data-sprite-id="${CSS.escape(sprite.id)}"]`);
-    if (element) {
+    const { button, menuAnchor, transformHandles } = overlayElements(sprite.id);
+    if (button) {
+      button.classList.toggle("selected", selected);
+      button.setAttribute("aria-pressed", String(selected));
+      button.style.zIndex = layer + 1;
+    }
+    [menuAnchor, transformHandles].forEach((element) => {
+      if (!element) return;
       element.classList.toggle("selected", selected);
-      element.setAttribute("aria-pressed", String(selected));
       element.style.zIndex = layer + 1;
-    }
-    const anchor = document.querySelector(`.sprite-menu-anchor[data-sprite-id="${CSS.escape(sprite.id)}"]`);
-    if (anchor) {
-      anchor.classList.toggle("selected", selected);
-      anchor.style.zIndex = layer + 1;
-    }
+    });
   });
 }
 
@@ -539,11 +566,12 @@ function showDraggedSprite(element, position) {
   element.style.left = `${position.xPercent}%`;
   element.style.top = `${position.yPercent}%`;
   showSelectedSprite(element.dataset.spriteId);
-  const anchor = document.querySelector(`.sprite-menu-anchor[data-sprite-id="${element.dataset.spriteId}"]`);
-  if (anchor) {
-    anchor.style.left = element.style.left;
-    anchor.style.top = element.style.top;
-  }
+  const { menuAnchor, transformHandles } = overlayElements(element.dataset.spriteId);
+  [menuAnchor, transformHandles].forEach((overlay) => {
+    if (!overlay) return;
+    overlay.style.left = element.style.left;
+    overlay.style.top = element.style.top;
+  });
 }
 
 function dragStart(event, element, sprite, canvas) {
@@ -590,6 +618,134 @@ function bindSpriteEvents(element) {
     element.addEventListener("pointerup", finish, { once: true });
     element.addEventListener("pointercancel", finish, { once: true });
   });
+}
+
+function clampPercent(value, min, max) {
+  return Math.max(min, Math.min(max, value));
+}
+
+function spriteCenterPx(sprite, bounds) {
+  return {
+    x: bounds.left + (sprite.xPercent / 100) * bounds.width,
+    y: bounds.top + (sprite.yPercent / 100) * bounds.height,
+  };
+}
+
+function updateSpriteGeometry(id, changes) {
+  editingEnvironment = {
+    ...editingEnvironment,
+    sprites: editingEnvironment.sprites.map((sprite) => sprite.id === id ? { ...sprite, ...changes } : sprite),
+  };
+}
+
+function showSpriteSize(id, sizePercent) {
+  const { button, menuAnchor, transformHandles } = overlayElements(id);
+  [button, menuAnchor, transformHandles].forEach((element) => { if (element) element.style.width = `${sizePercent}%`; });
+}
+
+function showSpriteRotation(id, rotationDegrees) {
+  const transform = spriteRotationTransform({ rotationDegrees });
+  const { button, transformHandles } = overlayElements(id);
+  if (button) button.style.transform = transform;
+  if (transformHandles) transformHandles.style.transform = transform;
+}
+
+function showSpritePosition(id, xPercent, yPercent) {
+  const { button, menuAnchor, transformHandles } = overlayElements(id);
+  [button, menuAnchor, transformHandles].forEach((element) => {
+    if (!element) return;
+    element.style.left = `${xPercent}%`;
+    element.style.top = `${yPercent}%`;
+  });
+}
+
+// A rotated square's on-screen (axis-aligned) footprint is wider than its own side length —
+// up to sqrt(2)x at 45deg. Use that footprint, not the raw sizePercent, when keeping a
+// resized or rotated sprite's center far enough from the canvas edge to stay recoverable.
+function spriteFootprintPercent(sprite) {
+  const angleRad = ((sprite.rotationDegrees || 0) * Math.PI) / 180;
+  return sprite.sizePercent * (Math.abs(Math.cos(angleRad)) + Math.abs(Math.sin(angleRad)));
+}
+
+function keepSpriteRecoverable(id) {
+  const sprite = editingEnvironment.sprites.find((item) => item.id === id);
+  if (!sprite) return;
+  const halfFootprint = spriteFootprintPercent(sprite) / 2;
+  const xPercent = clampPercent(sprite.xPercent, halfFootprint, 100 - halfFootprint);
+  const yPercent = clampPercent(sprite.yPercent, halfFootprint, 100 - halfFootprint);
+  if (xPercent === sprite.xPercent && yPercent === sprite.yPercent) return;
+  updateSpriteGeometry(id, { xPercent, yPercent });
+  showSpritePosition(id, xPercent, yPercent);
+}
+
+function bindPointerDrag(handle, event, onMove, onFinish) {
+  event.preventDefault();
+  event.stopPropagation();
+  handle.setPointerCapture(event.pointerId);
+  const move = (moveEvent) => onMove(moveEvent);
+  const finish = () => {
+    handle.removeEventListener("pointermove", move);
+    handle.removeEventListener("pointerup", finish);
+    handle.removeEventListener("pointercancel", finish);
+    if (handle.hasPointerCapture(event.pointerId)) handle.releasePointerCapture(event.pointerId);
+    onFinish();
+  };
+  handle.addEventListener("pointermove", move);
+  handle.addEventListener("pointerup", finish, { once: true });
+  handle.addEventListener("pointercancel", finish, { once: true });
+}
+
+function spriteDragContext(id) {
+  const sprite = editingEnvironment.sprites.find((item) => item.id === id);
+  if (!sprite) return null;
+  const bounds = document.querySelector(".activity-canvas").getBoundingClientRect();
+  return { sprite, bounds, center: spriteCenterPx(sprite, bounds) };
+}
+
+function startResizeSprite(event, id, handle) {
+  const context = spriteDragContext(id);
+  if (!context) return;
+  const { sprite, bounds, center } = context;
+  // Un-rotate the pointer offset into the sprite's own (unrotated) frame so a corner handle
+  // tracks the pointer correctly even when the sprite is currently rotated.
+  const angleRad = ((sprite.rotationDegrees || 0) * Math.PI) / 180;
+  bindPointerDrag(handle, event, (moveEvent) => {
+    const dx = moveEvent.clientX - center.x;
+    const dy = moveEvent.clientY - center.y;
+    const localX = dx * Math.cos(-angleRad) - dy * Math.sin(-angleRad);
+    const localY = dx * Math.sin(-angleRad) + dy * Math.cos(-angleRad);
+    const halfSizeFloorPx = 6; // keeps the box from collapsing to zero directly under the pointer
+    const halfSizePx = Math.max(halfSizeFloorPx, (Math.abs(localX) + Math.abs(localY)) / 2);
+    const sizePercent = clampPercent(((halfSizePx * 2) / bounds.width) * 100, minSpriteSizePercent, maxSpriteSizePercent);
+    updateSpriteGeometry(id, { sizePercent });
+    showSpriteSize(id, sizePercent);
+    keepSpriteRecoverable(id);
+  }, () => saveEnvironment(editingEnvironment));
+}
+
+function startRotateSprite(event, id, handle) {
+  const context = spriteDragContext(id);
+  if (!context) return;
+  const { center } = context;
+  bindPointerDrag(handle, event, (moveEvent) => {
+    const dx = moveEvent.clientX - center.x;
+    const dy = moveEvent.clientY - center.y;
+    // atan2 measures from the positive x-axis (pointing right); the rotation stem points up
+    // (the sprite's unrotated 0deg), which is 90deg further around, hence the offset.
+    const rotationDegrees = (Math.atan2(dy, dx) * 180) / Math.PI + 90;
+    updateSpriteGeometry(id, { rotationDegrees });
+    showSpriteRotation(id, rotationDegrees);
+    keepSpriteRecoverable(id);
+  }, () => saveEnvironment(editingEnvironment));
+}
+
+function bindSpriteTransformHandles(container) {
+  const id = container.dataset.spriteId;
+  container.querySelectorAll(".resize-handle").forEach((handle) => {
+    handle.addEventListener("pointerdown", (event) => startResizeSprite(event, id, handle));
+  });
+  const rotateHandle = container.querySelector(".rotate-handle");
+  rotateHandle?.addEventListener("pointerdown", (event) => startRotateSprite(event, id, rotateHandle));
 }
 
 function bindSpriteMenuAnchor(anchor) {

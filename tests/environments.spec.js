@@ -9,6 +9,15 @@ const validImage = (name = "background.png", mimeType = "image/png") => ({
   ),
 });
 
+async function spriteRotation(page, name) {
+  return page.getByRole("button", { name, exact: true }).evaluate((el) => {
+    const transform = getComputedStyle(el).transform;
+    if (transform === "none") return 0;
+    const [a, b] = transform.match(/^matrix\(([^)]+)\)$/)[1].split(",").map(Number);
+    return Math.atan2(b, a) * (180 / Math.PI);
+  });
+}
+
 async function spriteGeometry(page, name) {
   const canvas = await page.locator(".activity-canvas").boundingBox();
   const sprite = await page.getByRole("button", { name, exact: true }).boundingBox();
@@ -166,6 +175,119 @@ test("educators add a named, centered sprite whose relative size adapts to the a
     centerY: expect.closeTo(0.5, 2),
     widthRatio: expect.closeTo(original.widthRatio, 2),
   });
+});
+
+test("a selected sprite shows resize handles, and dragging a corner handle resizes it proportionally and persists", async ({ page }) => {
+  await page.goto("/");
+  await page.getByRole("button", { name: "Environments" }).click();
+  await page.getByRole("button", { name: "Create environment" }).click();
+  await page.getByLabel("Add sprite image").setInputFiles(validImage("puzzle_piece.png"));
+  await expect(page.getByRole("button", { name: "Puzzle Piece", exact: true })).toBeVisible();
+  await expect(page.getByRole("status")).toHaveText("Saved on this device");
+
+  const before = await spriteGeometry(page, "Puzzle Piece");
+  const seHandle = page.locator(".sprite-transform-handles.selected .handle-se");
+  await expect(seHandle).toBeVisible();
+  await expect(page.locator(".sprite-transform-handles.selected .rotate-handle")).toBeVisible();
+  await expect(page.locator(".sprite-transform-handles.selected .resize-handle")).toHaveCount(4);
+
+  const handleBox = await seHandle.boundingBox();
+  await page.mouse.move(handleBox.x + handleBox.width / 2, handleBox.y + handleBox.height / 2);
+  await page.mouse.down();
+  await page.mouse.move(handleBox.x + 60, handleBox.y + 60);
+  await page.mouse.up();
+  await expect(page.getByRole("status")).toHaveText("Saved on this device");
+
+  const after = await spriteGeometry(page, "Puzzle Piece");
+  expect(after.widthRatio).toBeGreaterThan(before.widthRatio);
+  expect(after.centerX).toBeCloseTo(before.centerX, 1);
+  expect(after.centerY).toBeCloseTo(before.centerY, 1);
+
+  await page.getByRole("button", { name: "Done" }).click();
+  await page.reload();
+  await page.getByRole("button", { name: "Environments" }).click();
+  await page.getByRole("button", { name: "Edit" }).click();
+  await expect.poll(() => spriteGeometry(page, "Puzzle Piece")).toMatchObject({
+    widthRatio: expect.closeTo(after.widthRatio, 2),
+  });
+});
+
+test("resizing or rotating a sprite already at the canvas edge keeps it recoverable within the activity area", async ({ page }) => {
+  await page.goto("/");
+  await page.getByRole("button", { name: "Environments" }).click();
+  await page.getByRole("button", { name: "Create environment" }).click();
+  await page.getByLabel("Add sprite image").setInputFiles(validImage("corner_lamp.png"));
+  const sprite = page.getByRole("button", { name: "Corner Lamp", exact: true });
+  await expect(sprite).toBeVisible();
+  await expect(page.getByRole("status")).toHaveText("Saved on this device");
+
+  const canvasBox = await page.locator(".activity-canvas").boundingBox();
+  const spriteBox = await sprite.boundingBox();
+  await page.mouse.move(spriteBox.x + spriteBox.width / 2, spriteBox.y + spriteBox.height / 2);
+  await page.mouse.down();
+  await page.mouse.move(canvasBox.x + canvasBox.width + 300, canvasBox.y + canvasBox.height + 300);
+  await page.mouse.up();
+  await expect(page.getByRole("status")).toHaveText("Saved on this device");
+  const atCorner = await spriteGeometry(page, "Corner Lamp");
+  expect(atCorner.centerX).toBeGreaterThan(0.85);
+
+  const seHandle = page.locator(".sprite-transform-handles.selected .handle-se");
+  const seBox = await seHandle.boundingBox();
+  await page.mouse.move(seBox.x + seBox.width / 2, seBox.y + seBox.height / 2);
+  await page.mouse.down();
+  await page.mouse.move(seBox.x + 220, seBox.y + 220);
+  await page.mouse.up();
+  await expect(page.getByRole("status")).toHaveText("Saved on this device");
+  const afterResize = await spriteGeometry(page, "Corner Lamp");
+  expect(afterResize.centerX + afterResize.widthRatio / 2).toBeLessThanOrEqual(1.01);
+  expect(afterResize.centerY + afterResize.widthRatio / 2).toBeLessThanOrEqual(1.01);
+
+  const rotateHandle = page.locator(".sprite-transform-handles.selected .rotate-handle");
+  const rotateBox = await rotateHandle.boundingBox();
+  const spriteCenter = await sprite.boundingBox().then((box) => ({ x: box.x + box.width / 2, y: box.y + box.height / 2 }));
+  await page.mouse.move(rotateBox.x + rotateBox.width / 2, rotateBox.y + rotateBox.height / 2);
+  await page.mouse.down();
+  await page.mouse.move(spriteCenter.x + 80, spriteCenter.y - 80);
+  await page.mouse.up();
+  await expect(page.getByRole("status")).toHaveText("Saved on this device");
+  const afterRotate = await spriteGeometry(page, "Corner Lamp");
+  expect(afterRotate.centerX + afterRotate.widthRatio / 2).toBeLessThanOrEqual(1.01);
+  expect(afterRotate.centerY + afterRotate.widthRatio / 2).toBeLessThanOrEqual(1.01);
+});
+
+test("dragging the rotation handle rotates a sprite freely, and rotation persists and renders consistently across sizes", async ({ page }) => {
+  await page.goto("/");
+  await page.getByRole("button", { name: "Environments" }).click();
+  await page.getByRole("button", { name: "Create environment" }).click();
+  await page.getByLabel("Add sprite image").setInputFiles(validImage("weathervane.png"));
+  await expect(page.getByRole("button", { name: "Weathervane", exact: true })).toBeVisible();
+  await expect(page.getByRole("status")).toHaveText("Saved on this device");
+
+  expect(await spriteRotation(page, "Weathervane")).toBeCloseTo(0, 0);
+
+  const spriteBox = await page.getByRole("button", { name: "Weathervane", exact: true }).boundingBox();
+  const centerX = spriteBox.x + spriteBox.width / 2;
+  const centerY = spriteBox.y + spriteBox.height / 2;
+  const rotateHandle = page.locator(".sprite-transform-handles.selected .rotate-handle");
+  await expect(rotateHandle).toBeVisible();
+  const handleBox = await rotateHandle.boundingBox();
+  await page.mouse.move(handleBox.x + handleBox.width / 2, handleBox.y + handleBox.height / 2);
+  await page.mouse.down();
+  await page.mouse.move(centerX + 80, centerY);
+  await page.mouse.up();
+  await expect(page.getByRole("status")).toHaveText("Saved on this device");
+
+  expect(await spriteRotation(page, "Weathervane")).toBeCloseTo(90, 0);
+
+  await page.getByRole("button", { name: "Done" }).click();
+  await page.reload();
+  await page.getByRole("button", { name: "Environments" }).click();
+  await page.getByRole("button", { name: "Edit" }).click();
+  await expect(page.getByRole("button", { name: "Weathervane", exact: true })).toBeVisible();
+  expect(await spriteRotation(page, "Weathervane")).toBeCloseTo(90, 0);
+
+  await page.setViewportSize({ width: 500, height: 800 });
+  expect(await spriteRotation(page, "Weathervane")).toBeCloseTo(90, 0);
 });
 
 test("sprite selection and saving keep the canvas and image preview in place", async ({ page }) => {
@@ -442,6 +564,8 @@ test("deleting a sprite offers a short-lived undo that restores it, and deletion
   await page.getByRole("button", { name: "Environments" }).click();
   await page.getByRole("button", { name: "Create environment" }).click();
   await page.getByLabel("Add sprite image").setInputFiles(validImage("kept_lantern.png"));
+  await expect(page.getByRole("button", { name: "Kept Lantern", exact: true })).toBeVisible();
+  await expect(page.getByRole("status")).toHaveText("Saved on this device");
   await page.locator(".activity-canvas").evaluate((canvas) => {
     const bounds = canvas.getBoundingClientRect();
     const dataTransfer = new DataTransfer();
