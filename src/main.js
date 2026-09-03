@@ -38,6 +38,10 @@ let environments = [];
 let editingEnvironment;
 let saveState = "saved";
 let saveMessage = "";
+let backgroundModalOpen = false;
+let backgroundConfirmation = { action: "none" };
+let backgroundMessage = "";
+const renderObjectUrls = new Set();
 
 function target(object, label, classes) {
   return `<button class="sound-target ${classes}" data-object="${object}" aria-label="Choose the ${label}"><span class="ring"></span><span class="target-label">${label}</span></button>`;
@@ -166,6 +170,78 @@ function escapeHtml(value) {
   return String(value).replace(/[&<>"']/g, (character) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[character]);
 }
 
+function backgroundUrl(environment) {
+  if (!environment.background?.blob) return "";
+  const url = URL.createObjectURL(environment.background.blob);
+  renderObjectUrls.add(url);
+  return url;
+}
+
+function clearRenderObjectUrls() {
+  renderObjectUrls.forEach((url) => URL.revokeObjectURL(url));
+  renderObjectUrls.clear();
+}
+
+function draftGuidance(environment) {
+  const missing = [];
+  if (!environment.name.trim()) missing.push("a name");
+  if (!environment.background) missing.push("a background");
+  missing.push("at least one sprite with a sound");
+  return `This draft needs ${missing.join(", ")} before it can be played.`;
+}
+
+function backgroundMessageMarkup() {
+  if (!backgroundMessage) return "";
+  return `<p class="background-message" role="alert">${escapeHtml(backgroundMessage)}</p>`;
+}
+
+function replaceBackgroundConfirmation() {
+  if (backgroundConfirmation.action !== "replace") return "";
+  return `<section class="background-confirmation" aria-labelledby="replace-background-title">
+    <h3 id="replace-background-title">Replace this background?</h3>
+    <p>The current image will be replaced.</p>
+    <div>
+      <button class="cancel-background-confirmation" type="button">Cancel</button>
+      <button class="confirm-replace-background" type="button">Replace background</button>
+    </div>
+  </section>`;
+}
+
+function removeBackgroundConfirmation() {
+  if (backgroundConfirmation.action !== "remove") return "";
+  return `<section class="background-confirmation" aria-labelledby="remove-background-title">
+    <h3 id="remove-background-title">Remove this background?</h3>
+    <p>The image will be removed from this environment.</p>
+    <div>
+      <button class="cancel-background-confirmation" type="button">Cancel</button>
+      <button class="confirm-remove-background" type="button">Remove background</button>
+    </div>
+  </section>`;
+}
+
+function backgroundModal() {
+  if (!backgroundModalOpen) return "";
+  const removeButton = editingEnvironment.background
+    ? `<div class="background-actions"><button class="remove-background" type="button">Remove background</button></div>`
+    : "";
+  return `<div class="modal-backdrop">
+    <section class="background-modal" role="dialog" aria-modal="true" aria-labelledby="background-modal-title">
+      <button class="close-background-modal close-modal" type="button" aria-label="Close">×</button>
+      <p class="eyebrow">ENVIRONMENT BACKGROUND</p>
+      <h2 id="background-modal-title">Set background</h2>
+      <p class="modal-copy">Choose a PNG, JPEG, or WebP image up to 10 MB. It will fill the activity area and stay centered.</p>
+      <label class="background-drop-zone" aria-label="Drop background image">
+        Drop an image here or <span>choose a file</span>
+        <input class="background-file" aria-label="Choose background image" type="file" accept="image/png,image/jpeg,image/webp">
+      </label>
+      ${backgroundMessageMarkup()}
+      ${removeButton}
+      ${replaceBackgroundConfirmation()}
+      ${removeBackgroundConfirmation()}
+    </section>
+  </div>`;
+}
+
 function saveStatus() {
   const text = saveState === "saving"
     ? "Saving on this device…"
@@ -199,12 +275,15 @@ function starterCard(name, state, description) {
 
 function userEnvironmentCard(environment) {
   const name = environment.name || "Untitled environment";
+  const thumbnail = environment.background
+    ? `<img class="environment-thumbnail image-thumbnail" src="${backgroundUrl(environment)}" alt="Background for ${escapeHtml(name)}">`
+    : `<div class="environment-thumbnail draft-thumbnail" aria-hidden="true">Draft</div>`;
   return `<article class="environment-card draft-card">
-    <div class="environment-thumbnail draft-thumbnail" aria-hidden="true">Draft</div>
+    ${thumbnail}
     <div class="environment-card-copy">
       <p class="card-kicker">Saved on this device</p>
       <h2>${escapeHtml(name)}</h2>
-      <p>Add a background, sprites, and sounds to make this activity playable.</p>
+      <p>${escapeHtml(draftGuidance(environment))}</p>
       <span class="environment-status draft">Draft</span>
     </div>
     <button class="edit-environment" data-environment-id="${environment.id}" type="button">Edit</button>
@@ -235,6 +314,9 @@ function renderLibrary() {
 }
 
 function renderEditor() {
+  const background = editingEnvironment.background
+    ? `<img src="${backgroundUrl(editingEnvironment)}" alt="Environment background">`
+    : `<p>No background yet</p>`;
   app.innerHTML = `<main class="editor">
     <header class="editor-header">
       <div>
@@ -248,21 +330,116 @@ function renderEditor() {
     <section class="editor-workspace">
       <label for="environment-name">Environment name</label>
       <input id="environment-name" value="${escapeHtml(editingEnvironment.name)}" placeholder="Untitled environment">
-      <p class="editor-next-step">Your new environment is a draft. You will be able to add a background, sprites, and sounds in the next steps.</p>
+      <section class="activity-canvas" aria-label="Activity area">${background}</section>
+      <button class="set-background" type="button">${editingEnvironment.background ? "Change background" : "Set background"}</button>
+      <p class="editor-next-step">${escapeHtml(draftGuidance(editingEnvironment))}</p>
     </section>
     ${recoveryGuidance()}
+    ${backgroundModal()}
   </main>`;
   const nameInput = document.querySelector("#environment-name");
   nameInput.focus();
   nameInput.select();
   nameInput.addEventListener("change", () => saveEnvironment({ ...editingEnvironment, name: nameInput.value }));
-  document.querySelector(".done-editing").addEventListener("click", () => { view = "library"; render(); });
+  document.querySelector(".done-editing").addEventListener("click", () => { view = "library"; backgroundModalOpen = false; render(); });
+  document.querySelector(".set-background").addEventListener("click", () => { backgroundModalOpen = true; backgroundMessage = ""; render(); });
+  document.querySelector(".activity-canvas").addEventListener("dragover", (event) => event.preventDefault());
+  document.querySelector(".activity-canvas").addEventListener("drop", (event) => {
+    event.preventDefault();
+    saveMessage = "Images dropped on the activity area are not backgrounds. Use Set background to change this image.";
+    render();
+  });
+  bindBackgroundModal();
 }
 
 function render() {
+  clearRenderObjectUrls();
   if (view === "library") return renderLibrary();
   if (view === "editor") return renderEditor();
   renderActivity();
+}
+
+function validateBackground(file) {
+  if (!file) return "Choose an image to continue.";
+  if (!["image/png", "image/jpeg", "image/webp"].includes(file.type)) {
+    return "Choose a PNG, JPEG, or WebP image.";
+  }
+  if (file.size > 10 * 1024 * 1024) return "Choose an image smaller than 10 MB.";
+  return "";
+}
+
+function imageCanDecode(file) {
+  return new Promise((resolve) => {
+    const image = new Image();
+    const url = URL.createObjectURL(file);
+    const finish = (canDecode) => {
+      URL.revokeObjectURL(url);
+      resolve(canDecode);
+    };
+    image.onload = () => finish(true);
+    image.onerror = () => finish(false);
+    image.src = url;
+  });
+}
+
+async function selectBackground(file) {
+  const error = validateBackground(file);
+  if (error) {
+    backgroundMessage = error;
+    render();
+    return;
+  }
+  if (!await imageCanDecode(file)) {
+    backgroundMessage = "This image could not be opened. Choose a PNG, JPEG, or WebP image that is not damaged.";
+    render();
+    return;
+  }
+  if (editingEnvironment.background) {
+    backgroundConfirmation = { action: "replace", file };
+    render();
+    return;
+  }
+  saveBackground(file);
+}
+
+async function saveBackground(file) {
+  backgroundConfirmation = { action: "none" };
+  backgroundMessage = editingEnvironment.background ? "Background replaced." : "Background added.";
+  await saveEnvironment({ ...editingEnvironment, background: { blob: file.slice(0, file.size, file.type) } });
+}
+
+function bindBackgroundModal() {
+  const modal = document.querySelector(".background-modal");
+  if (!modal) return;
+  document.querySelector(".close-background-modal").addEventListener("click", () => {
+    backgroundModalOpen = false;
+    backgroundConfirmation = { action: "none" };
+    render();
+  });
+  const input = document.querySelector(".background-file");
+  input.addEventListener("change", () => selectBackground(input.files[0]));
+  const dropZone = document.querySelector(".background-drop-zone");
+  dropZone.addEventListener("dragover", (event) => event.preventDefault());
+  dropZone.addEventListener("drop", (event) => {
+    event.preventDefault();
+    selectBackground(event.dataTransfer.files[0]);
+  });
+  document.querySelector(".remove-background")?.addEventListener("click", () => {
+    backgroundConfirmation = { action: "remove" };
+    render();
+  });
+  document.querySelector(".cancel-background-confirmation")?.addEventListener("click", () => {
+    backgroundConfirmation = { action: "none" };
+    render();
+  });
+  document.querySelector(".confirm-replace-background")?.addEventListener("click", () => {
+    saveBackground(backgroundConfirmation.file);
+  });
+  document.querySelector(".confirm-remove-background")?.addEventListener("click", async () => {
+    backgroundConfirmation = { action: "none" };
+    backgroundMessage = "Background removed.";
+    await saveEnvironment({ ...editingEnvironment, background: undefined });
+  });
 }
 
 async function createEnvironment() {
