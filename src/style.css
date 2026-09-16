@@ -103,7 +103,8 @@ body[data-view="activity"] { overflow:hidden; }
 .library-actions { display:flex; flex-wrap:wrap; gap:8px; }
 .library-empty { margin:0 0 18px; padding:18px; border:1px dashed #b5c9c0; border-radius:14px; color:var(--muted); font-size:14px; text-align:center; }
 .create-environment,
-.add-park-example {
+.add-park-example,
+.import-environment {
   display:inline-flex;
   align-items:center;
   gap:7px;
@@ -116,8 +117,10 @@ body[data-view="activity"] { overflow:hidden; }
   font:700 14px "DM Sans",sans-serif;
 }
 .create-environment:hover { background:var(--green-dark); }
-.add-park-example { color:var(--green-dark); border-color:#b5c9c0; background:#fff; }
-.add-park-example:hover { background:var(--green-soft); }
+.add-park-example,
+.import-environment { color:var(--green-dark); border-color:#b5c9c0; background:#fff; }
+.add-park-example:hover,
+.import-environment:hover { background:var(--green-soft); }
 .environment-grid { display:grid; grid-template-columns:repeat(auto-fill,minmax(300px,1fr)); gap:16px; }
 .environment-card {
   display:grid;

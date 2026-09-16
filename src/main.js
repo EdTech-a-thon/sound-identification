@@ -1,5 +1,6 @@
 import "./style.css";
 import { environmentStorage } from "./environment-storage.js";
+import { archiveFileName, packEnvironment, unpackEnvironment } from "./environment-archive.js";
 import { buildParkEnvironment, parkEnvironmentId } from "./park-starter.js";
 import { measureSpriteImage } from "./image-tools.js";
 import { openBackdropCropper } from "./backdrop-cropper.js";
@@ -94,6 +95,8 @@ const iconShapes = {
   saveFailed: `<rect x="2.5" y="4.2" width="19" height="12.4" rx="2.2"/><path d="M9 20.2h6M12 16.6v3.6"/><path d="M12 7.4v3.4"/><circle class="solid" cx="12" cy="13.4" r="1.05"/>`,
   more: `<circle class="solid" cx="12" cy="5.4" r="1.7"/><circle class="solid" cx="12" cy="12" r="1.7"/><circle class="solid" cx="12" cy="18.6" r="1.7"/>`,
   duplicate: `<rect x="9" y="9" width="11.5" height="11.5" rx="2.6"/><path d="M15.4 4.5H6.1A1.6 1.6 0 0 0 4.5 6.1v9.3"/>`,
+  export: `<path d="M12 4.5v10.5"/><path d="m8 11 4 4 4-4"/><path d="M5 19.5h14"/>`,
+  import: `<path d="M12 15V4.5"/><path d="m8 8.5 4-4 4 4"/><path d="M5 19.5h14"/>`,
   trash: `<path d="M4.6 7h14.8"/><path d="M9.6 7V5a.9.9 0 0 1 .9-.9h3a.9.9 0 0 1 .9.9v2"/><path d="m6.6 7 .9 11.4A1.7 1.7 0 0 0 9.2 20h5.6a1.7 1.7 0 0 0 1.7-1.6L17.4 7"/><path d="M10.4 10.6v5.8M13.6 10.6v5.8"/>`,
 };
 
@@ -730,6 +733,7 @@ function environmentMenuMarkup(environment, name) {
       <button class="environment-menu-trigger" type="button" data-environment-id="${environment.id}" aria-haspopup="menu" aria-expanded="${open}" aria-label="More options for ${escapeHtml(name)}" title="More options">${icon("more")}</button>
       <ul class="environment-menu" role="menu"${open ? "" : " hidden"}>
         <li><button class="duplicate-environment" type="button" role="menuitem" data-environment-id="${environment.id}">${icon("duplicate")}<span>Duplicate</span></button></li>
+        <li><button class="export-environment" type="button" role="menuitem" data-environment-id="${environment.id}">${icon("export")}<span>Export</span></button></li>
         <li><button class="delete-environment" type="button" role="menuitem" data-environment-id="${environment.id}">${icon("trash")}<span>Delete</span></button></li>
       </ul>
     </div>`;
@@ -775,6 +779,8 @@ function renderLibrary() {
         </div>
         <div class="library-actions">
           ${parkButton}
+          <button class="import-environment" type="button">${icon("import")}<span>Import environment</span></button>
+          <input class="import-environment-file" type="file" accept=".zip,application/zip" hidden>
           <button class="create-environment" type="button">${icon("sprite")}<span>Create environment</span></button>
         </div>
       </div>
@@ -789,6 +795,13 @@ function renderLibrary() {
   document.querySelector(".editor-home").addEventListener("click", () => navigate({ name: "library" }));
   document.querySelector(".create-environment").addEventListener("click", createEnvironment);
   document.querySelector(".add-park-example")?.addEventListener("click", addParkExample);
+  const importInput = document.querySelector(".import-environment-file");
+  document.querySelector(".import-environment").addEventListener("click", () => importInput.click());
+  importInput.addEventListener("change", () => {
+    const [file] = importInput.files;
+    importInput.value = "";
+    if (file) importEnvironmentFile(file);
+  });
   document.querySelectorAll(".edit-environment").forEach((button) => button.addEventListener("click", () => openEditor(button.dataset.environmentId)));
   document.querySelectorAll(".play-environment").forEach((button) => button.addEventListener("click", () => navigate({ name: "play", id: button.dataset.environmentId }, { origin: "library" })));
   bindEnvironmentMenus();
@@ -800,6 +813,7 @@ function bindEnvironmentMenus() {
     toggleEnvironmentMenu(trigger.dataset.environmentId);
   }));
   document.querySelectorAll(".duplicate-environment").forEach((button) => button.addEventListener("click", () => duplicateEnvironment(button.dataset.environmentId)));
+  document.querySelectorAll(".export-environment").forEach((button) => button.addEventListener("click", () => exportEnvironment(button.dataset.environmentId)));
   document.querySelectorAll(".delete-environment").forEach((button) => button.addEventListener("click", () => askToDeleteEnvironment(button.dataset.environmentId)));
   document.querySelector(".cancel-delete-environment")?.addEventListener("click", cancelDeleteEnvironment);
   document.querySelector(".confirm-delete-environment")?.addEventListener("click", () => deleteEnvironment(pendingDeleteId));
@@ -2254,6 +2268,50 @@ async function duplicateEnvironment(id) {
   if (!stored) return;
   environments = [...environments, copy];
   openEditor(copy.id);
+}
+
+// Exporting bundles the environment and all of its media into one .zip file the browser
+// downloads, so it can be sent to someone else and imported on their device.
+async function exportEnvironment(id) {
+  const environment = environments.find((item) => item.id === id);
+  if (!environment) return;
+  environmentMenuOpenId = undefined;
+  showEnvironmentMenu();
+  saveMessage = "";
+  let archive;
+  try {
+    archive = await packEnvironment(environment);
+  } catch (error) {
+    saveMessage = "This environment could not be exported. Try again in a moment.";
+    render();
+    return;
+  }
+  const url = URL.createObjectURL(archive);
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = archiveFileName(environment);
+  link.click();
+  window.setTimeout(() => URL.revokeObjectURL(url), 60000);
+}
+
+// An imported environment is saved as a new environment on this device, exactly like a copy.
+async function importEnvironmentFile(file) {
+  saveMessage = "";
+  let environment;
+  try {
+    environment = await unpackEnvironment(file);
+  } catch (error) {
+    saveMessage = error.message || "This file is not a Sound Explorer environment.";
+    render();
+    return;
+  }
+  const stored = await runLibraryWrite(
+    () => environmentStorage.save(environment),
+    "The imported environment could not be saved on this device. Check browser storage and try again.",
+  );
+  if (!stored) return;
+  environments = [...environments, environment];
+  render();
 }
 
 async function deleteEnvironment(id) {
