@@ -1,6 +1,6 @@
 // A small sound player drawn by hand: a play/pause control, the sound's waveform, and a marker
 // that moves through it. It replaces the browser's own audio controls so the sound window looks
-// like the rest of Sound Explorer.
+// like the rest of Everyday Sound Lab.
 
 const barCount = 48;
 
