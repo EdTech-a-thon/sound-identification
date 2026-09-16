@@ -1,42 +1,21 @@
 import "./style.css";
 import { environmentStorage } from "./environment-storage.js";
-
-const scenes = {
-  park: {
-    title: "A day at the park",
-    description: "Listen to the sound, then click the matching thing in the park.",
-    objects: ["bird", "slide", "swing", "leaves"],
-    sounds: {
-      bird: { file: "/sounds/loswin23-bird-chirping-499424.mp3", label: "bird" },
-      slide: { file: "/sounds/floraphonic-cute-character-wee-3-188163.mp3", label: "slide" },
-      leaves: { file: "/sounds/leaves_rustling.mp3", label: "rustling leaves" },
-      swing: { file: "/sounds/swing-squeak.mp3", label: "swing squeaking" },
-    },
-    sprites: [],
-  },
-  kitchen: {
-    title: "Sounds in the kitchen",
-    description: "Listen to the sound, then click the matching thing in the kitchen.",
-    objects: ["sink", "dishwasher", "microwave"],
-    sounds: {},
-    sprites: [],
-  },
-};
+import { buildParkEnvironment, parkEnvironmentId } from "./park-starter.js";
+import { measureSpriteImage } from "./image-tools.js";
+import { openBackdropCropper } from "./backdrop-cropper.js";
+import { mountWaveformPlayer } from "./waveform-player.js";
 
 const app = document.querySelector("#app");
-let activeScene = "park";
 let activeEnvironment;
 let activityOrigin;
 let activitySounds = {};
 let nextSoundTimeoutId;
 let currentSound;
 let audio;
-let modalOpen = false;
-let spriteModalOpen = false;
 let roundCount = 3;
 let completedRounds = 0;
 let activityFinished = false;
-let maxPlaybackSeconds = 5;
+const maxPlaybackSeconds = 5;
 let view = "library";
 let environments = [];
 let editingEnvironment;
@@ -50,9 +29,15 @@ let backgroundModalOpen = false;
 let backgroundConfirmation = { action: "none" };
 let backgroundMessage = "";
 let spriteMessage = "";
-let spriteMenuOpenId;
-let spriteMenuMode = "actions";
+// The context menu (right-click or long-press on a sprite) lists the same actions as the sprite
+// card; it is positioned where the pointer was, inside the activity area.
+let spriteMenu;
+let renameSpriteId;
 let soundFlow;
+// A copied sprite lives here until it is pasted; it never leaves the page.
+let spriteClipboard;
+let spritePreviewAudio;
+let spritePreviewId;
 // Library-card state: which card's Duplicate/Delete menu is open, and which environment is
 // waiting on a delete confirmation. Both are session-only, so leaving the library clears them.
 let environmentMenuOpenId;
@@ -63,7 +48,6 @@ const minSpriteSizePercent = 4;
 const maxSpriteSizePercent = 60;
 const editorHistoryLimit = 50;
 const acceptedAudioTypes = ["audio/mpeg", "audio/wav", "audio/x-wav", "audio/mp4", "audio/x-m4a"];
-const sharedActivityDescription = "Listen to the sound, then click the matching thing.";
 let pendingEnvironmentSave = Promise.resolve();
 // Save pacing: the indicator flips to "Saving…" the moment work starts, but waits out a short
 // settling window before returning to "Saved" so a burst of edits reads as one save, not a flicker.
@@ -77,19 +61,29 @@ const editorMessageMs = 8000;
 // Markup already written into each surgically updated editor region, so a refresh rewrites only
 // the regions whose content actually changed and leaves live DOM (focus, images) untouched.
 const renderedEditorRegions = new Map();
-const renderedSpriteMenus = new WeakMap();
 const spriteImageBlobs = new WeakMap();
 let renderedBackdrop = { kind: "pending", blob: undefined };
 const rotationSnapDegrees = 45;
 const projectName = "Sound Explorer";
-const starterSceneIds = ["park", "kitchen"];
+// Every activity area — editor, preview, and play — is the same 16:9 frame, so a sprite placed
+// in the editor sits in exactly the same spot when learners play.
+const canvasAspectRatio = 16 / 9;
+const acceptedImageTypes = ["image/png", "image/jpeg", "image/webp"];
 
 // A tiny inline icon set: no dependency, no icon font, no network request. Every icon is
 // decorative, so the control around it always carries the accessible name and the tooltip.
 const iconShapes = {
   // The Home control wears the app's own favicon artwork, so the mark in the browser tab and the
   // mark in the toolbar are the same thing.
-  home: `<rect width="32" height="32" rx="7" fill="#25424a"/><path fill="#fff8e5" d="M5 13h5l6-5a1 1 0 0 1 1.6.8v14.4A1 1 0 0 1 16 24l-6-5H5a1 1 0 0 1-1-1v-4a1 1 0 0 1 1-1Z"/><path fill="none" stroke="#ef8d67" stroke-linecap="round" stroke-width="2.5" d="M21 12.2a5.2 5.2 0 0 1 0 7.6M24.5 8.5a10.2 10.2 0 0 1 0 15"/>`,
+  home: `<rect width="32" height="32" rx="7" fill="#25424a"/><path fill="#fff8e5" d="M5 13h5l6-5a1 1 0 0 1 1.6.8v14.4A1 1 0 0 1 16 24l-6-5H5a1 1 0 0 1-1-1v-4a1 1 0 0 1 1-1Z"/><path fill="none" stroke="#83bd6d" stroke-linecap="round" stroke-width="2.5" d="M21 12.2a5.2 5.2 0 0 1 0 7.6M24.5 8.5a10.2 10.2 0 0 1 0 15"/>`,
+  rename: `<path d="M4 20h4.5L19 9.5a2.1 2.1 0 0 0-3-3L5.5 17Z"/><path d="m13.5 9 3 3"/>`,
+  image: `<rect x="3" y="5" width="18" height="14" rx="2.5"/><circle cx="8.6" cy="10" r="1.5"/><path d="m3.5 16.8 4.9-4.3 3.9 3.4 2.9-2.4 5.3 4.2"/>`,
+  sound: `<path d="M4 10h3.5l4.5-4v12l-4.5-4H4Z"/><path d="M15.5 9.2a4 4 0 0 1 0 5.6M18.3 6.4a8 8 0 0 1 0 11.2"/>`,
+  play: `<path class="solid" d="m8.5 5.4 10.4 6.6-10.4 6.6z"/>`,
+  pause: `<rect class="solid" x="6.5" y="5" width="4" height="14" rx="1"/><rect class="solid" x="13.5" y="5" width="4" height="14" rx="1"/>`,
+  stop: `<rect class="solid" x="6" y="6" width="12" height="12" rx="2"/>`,
+  close: `<path d="m6 6 12 12M18 6 6 18"/>`,
+  back: `<path d="M15 5l-7 7 7 7"/>`,
   undo: `<path d="M9.5 8.5H14a5 5 0 0 1 0 10H7.5"/><path d="M12.5 5 9 8.5l3.5 3.5"/>`,
   redo: `<path d="M14.5 8.5H10a5 5 0 0 0 0 10h6.5"/><path d="M11.5 5 15 8.5 11.5 12"/>`,
   backdrop: `<rect x="3" y="5" width="18" height="14" rx="2.5"/><circle cx="8.6" cy="10" r="1.5"/><path d="m3.5 16.8 4.9-4.3 3.9 3.4 2.9-2.4 5.3 4.2"/>`,
@@ -128,55 +122,22 @@ function navigate(route, { replace = false, origin } = {}) {
   applyRoute();
 }
 
-function target(object, label, classes) {
-  return `<button class="sound-target ${classes}" data-object="${object}" aria-label="Choose the ${label}"><span class="ring"></span><span class="target-label">${label}</span></button>`;
-}
-
-function customSprites() {
-  return scenes[activeScene].sprites.map((sprite) => `<button class="custom-sprite sound-target" data-object="${sprite.id}" data-sprite-id="${sprite.id}" style="left:${sprite.x}%;top:${sprite.y}%;width:${sprite.size}px;height:${sprite.size}px" aria-label="Choose ${sprite.label}"><img src="${sprite.image}" alt=""><span class="ring"></span><span class="target-label">${sprite.label}</span></button>`).join("");
-}
-
-function parkScene() {
-  return `<section class="scene park-scene" aria-label="An illustrated park with sounds to match"><div class="cloud cloud-one"></div><div class="cloud cloud-two"></div><div class="sun"></div><div class="hill hill-back"></div><div class="hill hill-front"></div><div class="path"></div><div class="tree tree-left"><div class="trunk"></div><div class="canopy canopy-one"></div><div class="canopy canopy-two"></div></div><div class="tree tree-right"><div class="trunk"></div><div class="canopy canopy-one"></div><div class="canopy canopy-two"></div><div class="canopy canopy-three"></div></div><div class="flowers flowers-left"><i></i><i></i><i></i></div><div class="flowers flowers-right"><i></i><i></i><i></i></div>${target("leaves", "Leaves", "leaves-target").replace('<span class="ring"></span>', '<span class="ring"></span><span class="leaf leaf-a">◆</span><span class="leaf leaf-b">◆</span><span class="leaf leaf-c">◆</span>')}<div class="bird"><span class="bird-body"></span><span class="bird-wing"></span><span class="bird-eye"></span><span class="bird-beak"></span><span class="bird-leg leg-left"></span><span class="bird-leg leg-right"></span></div>${target("bird", "Bird", "bird-target")}<div class="slide"><div class="slide-platform"></div><div class="slide-ladder"><i></i><i></i><i></i></div><div class="slide-chute"></div></div>${target("slide", "Slide", "slide-target")}<div class="swings"><div class="swing-top"></div><div class="swing-leg leg-one"></div><div class="swing-leg leg-two"></div><div class="rope rope-one"></div><div class="rope rope-two"></div><div class="seat"></div></div>${target("swing", "Swing", "swing-target")}${customSprites()}</section>`;
-}
-
-function kitchenScene() {
-  return `<section class="scene kitchen-scene" aria-label="An illustrated kitchen with sounds to match"><div class="kitchen-wall"><div class="tile-row"></div><div class="window"><div class="window-sky"></div><div class="window-hill"></div><i></i><b></b></div><div class="shelf"><span class="jar jar-one"></span><span class="jar jar-two"></span><span class="plant"></span></div></div><div class="counter"><div class="counter-top"></div><div class="counter-base"></div></div><div class="sink"><div class="faucet"></div><div class="basin"><span></span></div></div>${target("sink", "Sink", "sink-target")}<div class="dishwasher"><div class="dishwasher-panel"><i></i><i></i><i></i></div><div class="dishwasher-handle"></div></div>${target("dishwasher", "Dishwasher", "dishwasher-target")}<div class="microwave"><div class="microwave-window"><i></i><i></i><i></i></div><div class="microwave-controls"><i></i><i></i><i></i></div></div>${target("microwave", "Microwave", "microwave-target")}<div class="kitchen-floor"></div>${customSprites()}</section>`;
-}
-
-function managementModal() {
-  if (!modalOpen) return "";
-  const scene = scenes[activeScene];
-  const assignments = Object.entries(scene.sounds).map(([object, sound]) => `<li><span><b>${sound.label}</b><small>${sound.file.startsWith("blob:") ? "New uploaded audio" : sound.file.split("/").pop()}</small></span><button class="remove-sound" data-object="${object}" aria-label="Remove ${sound.label}">Remove</button></li>`).join("") || "<li class=\"empty-list\">No sounds have been added yet.</li>";
-  const choices = [
-    ...scene.objects.map((object) => ({ id: object, label: object[0].toUpperCase() + object.slice(1) })),
-    ...scene.sprites.map((sprite) => ({ id: sprite.id, label: sprite.label })),
-  ].map((object) => `<option value="${object.id}">${object.label}</option>`).join("");
-  return `<div class="modal-backdrop"><section class="sound-modal" role="dialog" aria-modal="true" aria-labelledby="sound-manager-title"><button class="close-modal" aria-label="Close">×</button><p class="eyebrow">TEACHER TOOLS</p><h2 id="sound-manager-title">Manage ${activeScene} sounds</h2><p class="modal-copy">Attach a sound to an item, replace a sound already there, or remove one.</p><label class="playback-length">Maximum playback length <output>${maxPlaybackSeconds === 0 ? "Full clip" : `${maxPlaybackSeconds} seconds`}</output><input class="length-slider" type="range" min="0" max="20" value="${maxPlaybackSeconds}"><small>Set to 0 to play the full audio clip.</small></label><form class="sound-form"><label>Sound name<input name="label" required placeholder="For example, running water"></label><label>Connect it to<select name="object">${choices}</select></label><label class="file-picker">Choose audio file<input name="audio" type="file" accept="audio/*" required><span>Choose an audio file</span></label><button class="save-sound" type="submit">Add or replace sound</button></form><div class="assignment-heading"><h3>Current sounds</h3><span>${Object.keys(scene.sounds).length}</span></div><ul class="sound-list">${assignments}</ul></section></div>`;
-}
-
-function spriteModal() {
-  if (!spriteModalOpen) return "";
-  const sprites = scenes[activeScene].sprites.map((sprite) => `<li><img src="${sprite.image}" alt=""><span><b>${sprite.label}</b><small>${sprite.sound ? "Sound attached" : "No sound attached"}</small></span><button class="remove-sprite" data-sprite-id="${sprite.id}">Remove</button></li>`).join("") || "<li class=\"empty-list\">No custom sprites have been added yet.</li>";
-  return `<div class="modal-backdrop"><section class="sound-modal sprite-modal" role="dialog" aria-modal="true" aria-labelledby="sprite-manager-title"><button class="close-sprite-modal close-modal" aria-label="Close">×</button><p class="eyebrow">TEACHER TOOLS</p><h2 id="sprite-manager-title">Add a custom sprite</h2><p class="modal-copy">Upload a PNG or JPEG, give it an optional sound, then place it anywhere in this scene.</p><form class="sprite-form sound-form"><label>Sprite name<input name="label" required placeholder="For example, barking dog"></label><label class="file-picker">Choose PNG or JPEG<input name="image" type="file" accept="image/png,image/jpeg" required><span>Choose an image</span></label><label class="file-picker">Optional sound file<input name="audio" type="file" accept="audio/*"><span>Choose an audio file</span></label><div class="position-row"><label>Left <input name="x" type="range" min="0" max="90" value="45"><output>45%</output></label><label>Top <input name="y" type="range" min="0" max="80" value="45"><output>45%</output></label></div><label>Size <input name="size" type="range" min="60" max="180" value="110"><output>110 px</output></label><button class="save-sound" type="submit">Add sprite to scene</button></form><div class="assignment-heading"><h3>Custom sprites</h3><span>${scenes[activeScene].sprites.length}</span></div><ul class="sound-list sprite-list">${sprites}</ul></section></div>`;
-}
-
 function spriteHasSound(sprite) {
   return Boolean(sprite.sound?.blob);
 }
 
 function customEnvironmentSpriteMarkup(sprite, layer) {
-  const style = `${spritePositionStyle(sprite, layer)};height:auto;transform:${spriteRotationTransform(sprite)}`;
-  return `<button class="sound-target custom-environment-sprite" data-object="${sprite.id}" style="${style}" aria-label="Choose the ${escapeHtml(sprite.name)}"><img src="${blobUrl(sprite.image.blob)}" alt=""><span class="ring"></span><span class="target-label">${escapeHtml(sprite.name)}</span></button>`;
+  const style = `${spritePositionStyle(sprite, layer)};transform:${spriteRotationTransform(sprite)}`;
+  return `<button class="sound-target custom-environment-sprite" data-object="${sprite.id}" style="${style}" aria-label="Choose the ${escapeHtml(sprite.name)}"><img src="${blobUrl(sprite.image.blob)}" alt="" draggable="false"><span class="ring"></span><span class="target-label">${escapeHtml(sprite.name)}</span></button>`;
 }
 
 function customEnvironmentScene(environment) {
   const backdrop = environment.background?.blob
-    ? `<img class="custom-environment-background" src="${blobUrl(environment.background.blob)}" alt="">`
+    ? `<img class="custom-environment-background" src="${blobUrl(environment.background.blob)}" alt="" draggable="false">`
     : "";
   const blankClass = environment.background?.kind === "blank" ? " blank-backdrop" : "";
   const sprites = (environment.sprites || []).map((sprite, layer) => customEnvironmentSpriteMarkup(sprite, layer)).join("");
-  return `<section class="scene custom-environment-scene${blankClass}" aria-label="${escapeHtml(environment.name)}">${backdrop}${sprites}</section>`;
+  return `<div class="scene-stage"><section class="scene custom-environment-scene${blankClass}" aria-label="${escapeHtml(environment.name)}">${backdrop}${sprites}</section></div>`;
 }
 
 // Computed once per renderActivity() call and cached in activitySounds — blobUrl() must only be
@@ -184,12 +145,16 @@ function customEnvironmentScene(environment) {
 // game-loop functions below read the cached map instead of recomputing it (and re-registering
 // fresh, never-revoked object URLs) on every Listen/New sound/answer click.
 function currentSounds() {
-  if (!activeEnvironment) return scenes[activeScene].sounds;
   const sounds = {};
   (activeEnvironment.sprites || []).forEach((sprite) => {
     if (spriteHasSound(sprite)) sounds[sprite.id] = { file: blobUrl(sprite.sound.blob), label: sprite.sound.label };
   });
   return sounds;
+}
+
+// The same mark and name lead every screen, and it always goes back to the library.
+function brandMarkup() {
+  return `<button class="editor-home brand" type="button" aria-label="Home" title="Home">${icon("home")}<span class="project-name">${projectName}</span></button>`;
 }
 
 function showActivityMediaFailure() {
@@ -205,75 +170,41 @@ function bindActivityMediaFailures() {
 }
 
 function renderActivity() {
-  const scene = scenes[activeScene];
-  const title = activeEnvironment ? escapeHtml(activeEnvironment.name) : scene.title;
-  const description = activeEnvironment ? sharedActivityDescription : scene.description;
-  const sceneMarkup = activeEnvironment ? customEnvironmentScene(activeEnvironment) : (activeScene === "park" ? parkScene() : kitchenScene());
-  const returnToEditor = Boolean(activeEnvironment) && activityOrigin === "editor";
-  const sceneChoiceMarkup = activeEnvironment ? "" : `<button class="scene-choice ${activeScene === "park" ? "active" : ""}" data-scene="park">Park</button><button class="scene-choice ${activeScene === "kitchen" ? "active" : ""}" data-scene="kitchen">Kitchen</button>`;
-  const legacyToolsMarkup = activeEnvironment ? "" : `<button class="manage-sprites" type="button">Add sprite</button><button class="manage-sounds" type="button">Manage sounds</button>`;
+  const returnToEditor = activityOrigin === "editor";
   activitySounds = currentSounds();
-  app.innerHTML = `<main class="park"><header><p class="eyebrow">SOUND EXPLORER</p><div class="heading-row"><div><h1>${title}</h1><p>${description}</p></div><div class="scene-menu" aria-label="Choose a scene">${sceneChoiceMarkup}<button class="open-library" type="button">${returnToEditor ? "Back to editor" : "Environments"}</button></div></div><div class="listen-panel"><button class="listen-button" type="button"><span>▶</span> Listen to the sound</button><button class="stop-button" type="button">■ Stop</button><button class="new-sound" type="button">New sound</button><label class="round-picker">Rounds <select aria-label="Number of practice rounds">${[1, 3, 5, 10].map((count) => `<option value="${count}" ${count === roundCount ? "selected" : ""}>${count}</option>`).join("")}</select></label>${legacyToolsMarkup}</div><p class="round-progress">Round ${Math.min(completedRounds + 1, roundCount)} of ${roundCount}</p></header>${sceneMarkup}<p class="message" role="status"></p>${activeEnvironment ? "" : managementModal()}${activeEnvironment ? "" : spriteModal()}</main>`;
+  app.innerHTML = `<main class="park">
+    <header class="app-topbar" role="toolbar" aria-label="Play toolbar">
+      ${brandMarkup()}
+      <h1 class="activity-title">${escapeHtml(activeEnvironment.name)}</h1>
+      <span class="toolbar-spacer"></span>
+      <button class="open-library" type="button">${icon("back")}<span>${returnToEditor ? "Back to editor" : "Environments"}</span></button>
+    </header>
+    <div class="listen-panel">
+      <button class="listen-button" type="button">${icon("play")}<span>Listen to the sound</span></button>
+      <button class="stop-button" type="button">${icon("stop")}<span>Stop</span></button>
+      <button class="new-sound" type="button">New sound</button>
+      <label class="round-picker">Rounds <select aria-label="Number of practice rounds">${[1, 3, 5, 10].map((count) => `<option value="${count}" ${count === roundCount ? "selected" : ""}>${count}</option>`).join("")}</select></label>
+      <p class="round-progress">Round ${Math.min(completedRounds + 1, roundCount)} of ${roundCount}</p>
+    </div>
+    ${customEnvironmentScene(activeEnvironment)}
+    <p class="message" role="status"></p>
+  </main>`;
   bindControls();
   chooseSound();
   bindActivityMediaFailures();
 }
 
 function bindControls() {
-  const editorEnvironmentId = activeEnvironment && activityOrigin === "editor" ? activeEnvironment.id : undefined;
+  const editorEnvironmentId = activityOrigin === "editor" ? activeEnvironment.id : undefined;
+  document.querySelector(".editor-home").addEventListener("click", () => navigate({ name: "library" }));
   document.querySelector(".open-library").addEventListener("click", () => {
     navigate(editorEnvironmentId ? { name: "editor", id: editorEnvironmentId } : { name: "library" });
   });
-  document.querySelectorAll(".scene-choice").forEach((button) => button.addEventListener("click", () => navigate({ name: "play", id: button.dataset.scene }, { origin: "library" })));
   document.querySelector(".listen-button").addEventListener("click", playCurrentSound);
   document.querySelector(".stop-button").addEventListener("click", stopSound);
   document.querySelector(".new-sound").addEventListener("click", () => { if (activityFinished) { completedRounds = 0; activityFinished = false; } chooseSound(); });
   document.querySelector(".round-picker select").addEventListener("change", (event) => { roundCount = Number(event.target.value); completedRounds = 0; activityFinished = false; chooseSound(); updateProgress(); });
-  document.querySelector(".manage-sounds")?.addEventListener("click", () => { modalOpen = true; render(); });
-  document.querySelector(".manage-sprites")?.addEventListener("click", () => { spriteModalOpen = true; render(); });
   document.querySelectorAll(".sound-target").forEach((targetButton) => targetButton.addEventListener("click", () => checkAnswer(targetButton)));
-  document.querySelector(".close-modal")?.addEventListener("click", () => { modalOpen = false; render(); });
-  document.querySelector(".length-slider")?.addEventListener("input", (event) => { maxPlaybackSeconds = Number(event.target.value); const output = document.querySelector(".playback-length output"); output.textContent = maxPlaybackSeconds === 0 ? "Full clip" : `${maxPlaybackSeconds} seconds`; });
-  document.querySelector(".sound-form")?.addEventListener("submit", addSound);
-  document.querySelector(".close-sprite-modal")?.addEventListener("click", () => { spriteModalOpen = false; render(); });
-  document.querySelector(".sprite-form")?.addEventListener("submit", addSprite);
-  document.querySelectorAll(".sprite-form input[type=range]").forEach((input) => input.addEventListener("input", () => { input.nextElementSibling.textContent = `${input.value}${input.name === "size" ? " px" : "%"}`; }));
-  document.querySelectorAll(".remove-sound").forEach((button) => button.addEventListener("click", () => { delete scenes[activeScene].sounds[button.dataset.object]; currentSound = undefined; render(); }));
-  document.querySelectorAll(".remove-sprite").forEach((button) => button.addEventListener("click", () => removeSprite(button.dataset.spriteId)));
-}
-
-function addSound(event) {
-  event.preventDefault();
-  const form = new FormData(event.currentTarget);
-  const file = form.get("audio");
-  const object = form.get("object");
-  scenes[activeScene].sounds[object] = { file: URL.createObjectURL(file), label: form.get("label").trim() || object };
-  currentSound = undefined;
-  render();
-}
-
-function addSprite(event) {
-  event.preventDefault();
-  const form = new FormData(event.currentTarget);
-  const image = form.get("image");
-  const sound = form.get("audio");
-  const id = `sprite-${Date.now()}`;
-  const label = form.get("label").trim();
-  scenes[activeScene].sprites.push({ id, label, image: URL.createObjectURL(image), sound: sound.size ? URL.createObjectURL(sound) : "", x: Number(form.get("x")), y: Number(form.get("y")), size: Number(form.get("size")) });
-  if (sound.size) scenes[activeScene].sounds[id] = { file: scenes[activeScene].sprites.at(-1).sound, label };
-  currentSound = undefined;
-  spriteModalOpen = false;
-  render();
-}
-
-function removeSprite(id) {
-  const sprite = scenes[activeScene].sprites.find((item) => item.id === id);
-  if (sprite) URL.revokeObjectURL(sprite.image);
-  if (sprite?.sound) URL.revokeObjectURL(sprite.sound);
-  scenes[activeScene].sprites = scenes[activeScene].sprites.filter((item) => item.id !== id);
-  delete scenes[activeScene].sounds[id];
-  currentSound = undefined;
-  render();
 }
 
 function playCurrentSound() {
@@ -282,9 +213,7 @@ function playCurrentSound() {
   audio = new Audio();
   const showPlaybackFailure = () => {
     const message = document.querySelector(".message");
-    if (message) message.textContent = activeEnvironment
-      ? "This sound could not be played. Return to the editor and replace its audio file."
-      : "This sound could not be played. Try again or choose a new sound.";
+    if (message) message.textContent = "This sound could not be played. Return to the editor and replace its audio file.";
   };
   audio.addEventListener("error", showPlaybackFailure, { once: true });
   if (maxPlaybackSeconds > 0) audio.addEventListener("timeupdate", () => { if (audio.currentTime >= maxPlaybackSeconds) stopSound(false); });
@@ -293,7 +222,7 @@ function playCurrentSound() {
 }
 function stopSound(showMessage = true) { if (!audio) return; audio.pause(); audio.currentTime = 0; if (showMessage) document.querySelector(".message").textContent = "Sound stopped. Press Listen to hear it again."; }
 function updateProgress() { document.querySelector(".round-progress").textContent = activityFinished ? `You finished all ${roundCount} rounds!` : `Round ${Math.min(completedRounds + 1, roundCount)} of ${roundCount}`; }
-function chooseSound() { clearTimeout(nextSoundTimeoutId); const available = Object.keys(activitySounds); const message = document.querySelector(".message"); if (activityFinished) { message.textContent = `Great work! You finished all ${roundCount} rounds. Choose New sound to practise again.`; return; } if (!available.length) { message.textContent = activeEnvironment ? "This environment needs a sprite with a sound to play." : "Add an audio file with Manage sounds to start this scene."; return; } const choices = available.filter((sound) => sound !== currentSound); currentSound = (choices.length ? choices : available)[Math.floor(Math.random() * (choices.length ? choices.length : available.length))]; document.querySelectorAll(".sound-target").forEach((item) => item.classList.remove("selected", "correct", "incorrect")); message.textContent = "Listen carefully, then choose what made the sound."; updateProgress(); playCurrentSound(); }
+function chooseSound() { clearTimeout(nextSoundTimeoutId); const available = Object.keys(activitySounds); const message = document.querySelector(".message"); if (activityFinished) { message.textContent = `Great work! You finished all ${roundCount} rounds. Choose New sound to practise again.`; return; } if (!available.length) { message.textContent = "This environment needs a sprite with a sound to play."; return; } const choices = available.filter((sound) => sound !== currentSound); currentSound = (choices.length ? choices : available)[Math.floor(Math.random() * (choices.length ? choices.length : available.length))]; document.querySelectorAll(".sound-target").forEach((item) => item.classList.remove("selected", "correct", "incorrect")); message.textContent = "Listen carefully, then choose what made the sound."; updateProgress(); playCurrentSound(); }
 function checkAnswer(targetButton) { const message = document.querySelector(".message"); if (activityFinished) { message.textContent = `You finished all ${roundCount} rounds. Choose New sound to play again.`; return; } if (!currentSound) { message.textContent = "Add a sound or press Listen to begin."; return; } document.querySelectorAll(".sound-target").forEach((item) => item.classList.remove("selected", "correct", "incorrect")); targetButton.classList.add("selected"); if (targetButton.dataset.object === currentSound) { targetButton.classList.add("correct"); completedRounds += 1; if (completedRounds === roundCount) { activityFinished = true; message.textContent = `Wonderful! You matched all ${roundCount} sounds.`; updateProgress(); stopSound(false); } else { message.textContent = `Yes! That was ${activitySounds[currentSound].label}.`; nextSoundTimeoutId = window.setTimeout(chooseSound, 1300); } } else { targetButton.classList.add("incorrect"); message.textContent = "Not quite. Listen once more and try again."; } }
 
 async function loadEnvironments() {
@@ -334,7 +263,13 @@ function isEnvironmentRecord(record) {
       && typeof sprite.xPercent === "number"
       && typeof sprite.yPercent === "number"
       && typeof sprite.sizePercent === "number"
+      && (sprite.aspectRatio === undefined || typeof sprite.aspectRatio === "number")
       && sprite.image?.blob instanceof Blob));
+}
+
+// Sprites saved before images were measured have no aspect ratio; they stay square.
+function spriteAspectRatio(sprite) {
+  return sprite.aspectRatio > 0 ? sprite.aspectRatio : 1;
 }
 
 function environmentWithoutSessionState(environment) {
@@ -369,6 +304,7 @@ function sameEnvironment(left, right) {
       && sprite.xPercent === other.xPercent
       && sprite.yPercent === other.yPercent
       && sprite.sizePercent === other.sizePercent
+      && spriteAspectRatio(sprite) === spriteAspectRatio(other)
       && (sprite.rotationDegrees || 0) === (other.rotationDegrees || 0)
       && sprite.image?.blob === other.image?.blob
       && sprite.sound?.blob === other.sound?.blob
@@ -417,8 +353,8 @@ async function restoreEditorHistory(fromStack, toStack) {
   pushHistory(toStack, editingEnvironment);
   const restored = fromStack.pop();
   selectedSpriteId = restored.sprites.some((sprite) => sprite.id === selectedSpriteId) ? selectedSpriteId : undefined;
-  spriteMenuOpenId = undefined;
-  spriteMenuMode = "actions";
+  spriteMenu = undefined;
+  renameSpriteId = undefined;
   soundFlow = undefined;
   backgroundConfirmation = { action: "none" };
   await saveEnvironment(restored);
@@ -439,17 +375,39 @@ function backgroundUrl(environment) {
   return environment.background?.blob ? blobUrl(environment.background.blob) : "";
 }
 
+// A sprite's width is a share of the activity area's width; its height follows the image's own
+// shape. Both are percentages, so the same numbers place it identically at any screen size.
 function spritePositionStyle(sprite, layer) {
-  return `left:${sprite.xPercent}%;top:${sprite.yPercent}%;width:${sprite.sizePercent}%;aspect-ratio:1;z-index:${layer + 1}`;
+  return `left:${sprite.xPercent}%;top:${sprite.yPercent}%;width:${sprite.sizePercent}%;aspect-ratio:${spriteAspectRatio(sprite)};z-index:${layer + 1}`;
 }
 
 function spriteRotationTransform(sprite) {
   return `translate(-50%,-50%) rotate(${sprite.rotationDegrees || 0}deg)`;
 }
 
+// The axis-aligned box a rotated sprite actually occupies, in percentages of the activity area
+// (width as a share of its width, height as a share of its height). Everything that must stay
+// upright — the sprite card, the edge clamp — is measured against this footprint.
+function spriteFootprint(sprite) {
+  const angleRad = ((sprite.rotationDegrees || 0) * Math.PI) / 180;
+  const cos = Math.abs(Math.cos(angleRad));
+  const sin = Math.abs(Math.sin(angleRad));
+  const width = sprite.sizePercent;
+  const height = sprite.sizePercent / spriteAspectRatio(sprite);
+  return {
+    widthPercent: width * cos + height * sin,
+    heightPercent: (width * sin + height * cos) * canvasAspectRatio,
+  };
+}
+
+function spriteFootprintStyle(sprite, layer) {
+  const footprint = spriteFootprint(sprite);
+  return `left:${sprite.xPercent}%;top:${sprite.yPercent}%;width:${footprint.widthPercent}%;height:${footprint.heightPercent}%;z-index:${layer + 1}`;
+}
+
 function spriteMarkup(sprite, layer) {
   const selected = sprite.id === selectedSpriteId;
-  return `<button class="editor-sprite ${selected ? "selected" : ""}" data-sprite-id="${sprite.id}" aria-label="${escapeHtml(sprite.name)}" aria-pressed="${selected}" style="${spritePositionStyle(sprite, layer)};transform:${spriteRotationTransform(sprite)}"><img src="${blobUrl(sprite.image.blob)}" alt="${escapeHtml(sprite.name)}"></button>${spriteMenuAnchorMarkup(sprite, layer, selected)}${spriteTransformHandlesMarkup(sprite, layer, selected)}`;
+  return `<button class="editor-sprite ${selected ? "selected" : ""}" data-sprite-id="${sprite.id}" aria-label="${escapeHtml(sprite.name)}" aria-pressed="${selected}" style="${spritePositionStyle(sprite, layer)};transform:${spriteRotationTransform(sprite)}"><img src="${blobUrl(sprite.image.blob)}" alt="${escapeHtml(sprite.name)}" draggable="false"><span class="ring"></span></button>${spriteTransformHandlesMarkup(sprite, layer, selected)}${spriteCardAnchorMarkup(sprite, layer, selected)}`;
 }
 
 function spriteTransformHandlesMarkup(sprite, layer, selected) {
@@ -463,29 +421,47 @@ function spriteTransformHandlesMarkup(sprite, layer, selected) {
   </div>`;
 }
 
-// The anchor shares the sprite's rotated frame so the ⋮ button stays welded to the sprite's edge;
-// the stylesheet counter-rotates the button and its menu by --sprite-rotation so both stay upright.
-function spriteMenuAnchorMarkup(sprite, layer, selected) {
-  const open = sprite.id === spriteMenuOpenId;
-  return `<div class="sprite-menu-anchor ${selected ? "selected" : ""}" data-sprite-id="${sprite.id}" style="${spritePositionStyle(sprite, layer)};--sprite-rotation:${sprite.rotationDegrees || 0}deg">
-    <button class="sprite-menu-trigger" type="button" aria-haspopup="menu" aria-expanded="${open}" aria-label="Sprite options for ${escapeHtml(sprite.name)}">⋮</button>
-    <div class="sprite-menu" role="menu" ${open ? "" : "hidden"}>${open ? spriteMenuBodyMarkup(sprite) : ""}</div>
+// The card anchor is the sprite's upright footprint, so the card hangs below the sprite however
+// it is rotated and never tilts with it.
+function spriteCardAnchorMarkup(sprite, layer, selected) {
+  return `<div class="sprite-card-anchor ${selected ? "selected" : ""}" data-sprite-id="${sprite.id}" style="${spriteFootprintStyle(sprite, layer)}">
+    <div class="sprite-card" role="toolbar" aria-label="Sprite options for ${escapeHtml(sprite.name)}">${spriteCardBodyMarkup(sprite)}</div>
   </div>`;
 }
 
-function spriteMenuBodyMarkup(sprite) {
-  if (spriteMenuMode === "rename") {
+function spriteCardBodyMarkup(sprite) {
+  if (sprite.id === renameSpriteId) {
     return `<form class="sprite-rename-form">
-      <label>Sprite name<input name="name" value="${escapeHtml(sprite.name)}" required></label>
-      <button type="submit">Save name</button>
+      <label><span class="sr-only">Sprite name</span><input name="name" value="${escapeHtml(sprite.name)}" aria-label="Sprite name" required></label>
+      <button type="submit" class="save-sprite-name">Save name</button>
+      <button type="button" class="cancel-sprite-rename" aria-label="Cancel rename" title="Cancel">${icon("close")}</button>
     </form>`;
   }
-  const soundLabel = sprite.sound ? "Replace sound" : "Add sound";
-  return `<ul class="sprite-menu-actions">
-    <li><button type="button" class="rename-sprite" role="menuitem">Rename</button></li>
-    <li><label class="replace-sprite-image file-picker" role="menuitem"><span>Replace image</span><input class="replace-sprite-image-file" aria-label="Replace image" type="file" accept="image/png,image/jpeg,image/webp"></label></li>
-    <li><label class="attach-sprite-sound file-picker" role="menuitem"><span>${soundLabel}</span><input class="attach-sprite-sound-file" aria-label="${soundLabel}" type="file" accept="${acceptedAudioTypes.join(",")}"></label></li>
-    <li><button type="button" class="delete-sprite" role="menuitem">Delete</button></li>
+  const previewing = sprite.id === spritePreviewId;
+  const sound = spriteHasSound(sprite)
+    ? `<span class="sprite-card-sound">
+        <button type="button" class="preview-sprite-sound" aria-label="${previewing ? "Stop" : "Play"} sound for ${escapeHtml(sprite.name)}" aria-pressed="${previewing}" title="${previewing ? "Stop" : "Play"} sound">${icon(previewing ? "pause" : "play")}</button>
+        <button type="button" class="open-sprite-sound" title="Open sound">${escapeHtml(sprite.sound.label)}</button>
+      </span>`
+    : `<button type="button" class="open-sprite-sound add-sound" title="Add sound">${icon("sound")}<span>Add sound</span></button>`;
+  return `<button type="button" class="rename-sprite" title="Rename" aria-label="Rename ${escapeHtml(sprite.name)}">${escapeHtml(sprite.name)}${icon("rename")}</button>
+    ${sound}
+    <span class="sprite-card-divider"></span>
+    <label class="replace-sprite-image file-picker" title="Replace image">${icon("image")}<input class="replace-sprite-image-file" aria-label="Replace image" type="file" accept="${acceptedImageTypes.join(",")}"></label>
+    <button type="button" class="duplicate-sprite" aria-label="Duplicate" title="Duplicate">${icon("duplicate")}</button>
+    <button type="button" class="delete-sprite" aria-label="Delete" title="Delete">${icon("trash")}</button>`;
+}
+
+// The right-click menu offers the card's actions by name, for anyone who reaches for a menu.
+function spriteContextMenuMarkup() {
+  const sprite = spriteMenu && (editingEnvironment.sprites || []).find((item) => item.id === spriteMenu.spriteId);
+  if (!sprite) return "";
+  return `<ul class="sprite-context-menu" role="menu" data-sprite-id="${sprite.id}" style="left:${spriteMenu.xPercent}%;top:${spriteMenu.yPercent}%">
+    <li><button type="button" class="rename-sprite" role="menuitem">${icon("rename")}<span>Rename</span></button></li>
+    <li><label class="replace-sprite-image file-picker" role="menuitem">${icon("image")}<span>Replace image</span><input class="replace-sprite-image-file" aria-label="Replace image" type="file" accept="${acceptedImageTypes.join(",")}"></label></li>
+    <li><button type="button" class="open-sprite-sound" role="menuitem">${icon("sound")}<span>${spriteHasSound(sprite) ? "Sound" : "Add sound"}</span></button></li>
+    <li><button type="button" class="duplicate-sprite" role="menuitem">${icon("duplicate")}<span>Duplicate</span></button></li>
+    <li><button type="button" class="delete-sprite" role="menuitem">${icon("trash")}<span>Delete</span></button></li>
   </ul>`;
 }
 
@@ -582,7 +558,7 @@ function backdropOnboardingBody() {
   return `<div class="backdrop-onboarding-copy">
       <p class="eyebrow">FIRST, CHOOSE A BACKDROP</p>
       <h2 id="backdrop-onboarding-title">Drag backdrop in</h2>
-      <p>Drop one PNG, JPEG, or WebP image here to fill the activity area.</p>
+      <p>Drop, paste, or choose one PNG, JPEG, or WebP image. You can zoom and position it before it fills the activity area.</p>
     </div>
     <div class="backdrop-onboarding-actions">
       <label class="initial-backdrop-picker file-picker">
@@ -593,18 +569,6 @@ function backdropOnboardingBody() {
       <button class="start-blank-backdrop" type="button">Start with a blank background</button>
     </div>
     ${backgroundMessageMarkup()}`;
-}
-
-function replaceBackgroundConfirmation() {
-  if (backgroundConfirmation.action !== "replace") return "";
-  return `<section class="background-confirmation" aria-labelledby="replace-background-title">
-    <h3 id="replace-background-title">Replace this backdrop?</h3>
-    <p>The current image will be replaced.</p>
-    <div>
-      <button class="cancel-background-confirmation" type="button">Cancel</button>
-      <button class="confirm-replace-background" type="button">Replace backdrop</button>
-    </div>
-  </section>`;
 }
 
 function removeBackgroundConfirmation() {
@@ -626,56 +590,73 @@ function backgroundModal() {
     : "";
   return `<div class="modal-backdrop">
     <section class="background-modal" role="dialog" aria-modal="true" aria-labelledby="background-modal-title">
-      <button class="close-background-modal close-modal" type="button" aria-label="Close">×</button>
+      <button class="close-background-modal close-modal" type="button" aria-label="Close">${icon("close")}</button>
       <p class="eyebrow">ENVIRONMENT BACKDROP</p>
       <h2 id="background-modal-title">Change backdrop</h2>
-      <p class="modal-copy">Choose a PNG, JPEG, or WebP image up to 10 MB. It will fill the activity area and stay centered.</p>
+      <p class="modal-copy">Drop, paste, or choose a PNG, JPEG, or WebP image up to 10 MB. You can zoom and position it before it fills the activity area.</p>
       <label class="background-drop-zone" aria-label="Drop backdrop image">
-        Drop a backdrop image here or <span>choose a file</span>
-        <input class="background-file" aria-label="Choose backdrop image" type="file" accept="image/png,image/jpeg,image/webp">
+        Drop or paste a backdrop image here, or <span>choose a file</span>
+        <input class="background-file" aria-label="Choose backdrop image" type="file" accept="${acceptedImageTypes.join(",")}">
       </label>
       ${backgroundMessageMarkup()}
       ${removeButton}
-      ${replaceBackgroundConfirmation()}
       ${removeBackgroundConfirmation()}
     </section>
   </div>`;
 }
 
-// Cached per sound-flow so re-rendering the modal region reuses one object URL instead of
-// handing the <audio> element a fresh src (which would restart the preview) on every refresh.
-function soundFlowPreviewUrl() {
-  if (!soundFlow.previewUrl) soundFlow.previewUrl = blobUrl(soundFlow.file);
-  return soundFlow.previewUrl;
+function soundFlowSprite() {
+  return (editingEnvironment.sprites || []).find((sprite) => sprite.id === soundFlow.spriteId);
 }
 
+// One modal covers every sound question about a sprite: hearing the sound it has, labelling a
+// new one, replacing it, or removing it. A sprite with no sound opens straight onto the picker.
 function soundFlowModal() {
   if (!soundFlow) return "";
-  if (soundFlow.stage === "confirm-replace") {
-    return `<div class="modal-backdrop">
-      <section class="sound-modal" role="dialog" aria-modal="true" aria-labelledby="replace-sound-title">
-        <button class="close-sound-flow close-modal" type="button" aria-label="Close">×</button>
-        <p class="eyebrow">SPRITE SOUND</p>
-        <h2 id="replace-sound-title">Replace this sound?</h2>
-        <p class="modal-copy">This sprite already has a sound attached. Replacing it will remove the current one.</p>
-        <div class="modal-actions">
-          <button class="cancel-sound-flow" type="button">Cancel</button>
-          <button class="confirm-replace-sound" type="button">Replace sound</button>
-        </div>
-      </section>
-    </div>`;
-  }
-  return `<div class="modal-backdrop">
-    <section class="sound-modal" role="dialog" aria-modal="true" aria-labelledby="label-sound-title">
-      <button class="close-sound-flow close-modal" type="button" aria-label="Close">×</button>
-      <p class="eyebrow">SPRITE SOUND</p>
-      <h2 id="label-sound-title">Label this sound</h2>
-      <audio class="sound-preview" controls src="${soundFlowPreviewUrl()}"></audio>
-      ${soundFlow.error ? `<p class="sprite-message" role="alert">${escapeHtml(soundFlow.error)}</p>` : ""}
+  const sprite = soundFlowSprite();
+  if (!sprite) return "";
+  const audioInput = (label) => `<label class="sound-file-picker file-picker"><span>${label}</span><input class="attach-sprite-sound-file" aria-label="${label}" type="file" accept="${acceptedAudioTypes.join(",")}"></label>`;
+  const error = soundFlow.error ? `<p class="sprite-message" role="alert">${escapeHtml(soundFlow.error)}</p>` : "";
+  let body;
+  if (soundFlow.stage === "choose") {
+    body = `<h2 id="sound-modal-title">Add a sound</h2>
+      <p class="modal-copy">Choose an MP3, WAV, or M4A file up to 20 MB for <b>${escapeHtml(sprite.name)}</b>. Learners will hear it and look for this sprite.</p>
+      <label class="background-drop-zone sound-drop-zone" aria-label="Drop sound file">
+        Drop a sound file here or <span>choose a file</span>
+        <input class="attach-sprite-sound-file" aria-label="Add sound" type="file" accept="${acceptedAudioTypes.join(",")}">
+      </label>
+      ${error}`;
+  } else if (soundFlow.stage === "label") {
+    body = `<h2 id="sound-modal-title">${soundFlow.replacing ? "Replace this sound" : "Label this sound"}</h2>
+      <p class="modal-copy">${soundFlow.replacing ? `The current sound on <b>${escapeHtml(sprite.name)}</b> will be replaced.` : `Give the sound on <b>${escapeHtml(sprite.name)}</b> a name learners will understand.`}</p>
+      <div class="waveform-player" data-sound="new"></div>
+      ${error}
       <form class="sound-label-form sound-form">
         <label>Sound label<input name="label" value="${escapeHtml(soundFlow.label)}" required></label>
-        <button class="save-sound" type="submit">${soundFlow.replacing ? "Replace sound" : "Add sound"}</button>
-      </form>
+        <div class="modal-actions">
+          <button class="cancel-sound-flow" type="button">Cancel</button>
+          <button class="save-sound" type="submit">${soundFlow.replacing ? "Replace sound" : "Add sound"}</button>
+        </div>
+      </form>`;
+  } else {
+    body = `<h2 id="sound-modal-title">${escapeHtml(sprite.sound.label)}</h2>
+      <p class="modal-copy">The sound attached to <b>${escapeHtml(sprite.name)}</b>.</p>
+      <div class="waveform-player" data-sound="current"></div>
+      ${error}
+      <form class="sound-label-form sound-form">
+        <label>Sound label<input name="label" value="${escapeHtml(sprite.sound.label)}" required></label>
+        <div class="modal-actions">
+          <button class="save-sound" type="submit">Save label</button>
+          ${audioInput("Replace sound")}
+          <button class="remove-sprite-sound" type="button">Remove sound</button>
+        </div>
+      </form>`;
+  }
+  return `<div class="modal-backdrop">
+    <section class="sound-modal" role="dialog" aria-modal="true" aria-labelledby="sound-modal-title">
+      <button class="close-sound-flow close-modal" type="button" aria-label="Close">${icon("close")}</button>
+      <p class="eyebrow">SPRITE SOUND</p>
+      ${body}
     </section>
   </div>`;
 }
@@ -706,32 +687,13 @@ function environmentMetadata(spriteCount, soundCount) {
   return `${spriteCount} ${spriteCount === 1 ? "sprite" : "sprites"} · ${soundCount} ${soundCount === 1 ? "sound" : "sounds"}`;
 }
 
-function starterCard(name, state, description, spriteCount, soundCount) {
-  const playable = state === "Ready to play";
-  const action = playable
-    ? `<button class="play-starter" data-scene="${name.toLowerCase()}" type="button" aria-label="Play ${name}">Play</button>`
-    : `<button disabled type="button" aria-label="Play ${name}" title="This starter activity needs a sound before it can be played.">Needs a sound</button>`;
-
-  return `<article class="environment-card starter-card">
-    <div class="environment-thumbnail ${name.toLowerCase()}-thumbnail" aria-hidden="true"></div>
-    <div class="environment-card-copy">
-      <p class="card-kicker">Starter environment</p>
-      <h2>${name}</h2>
-      <p>${description}</p>
-      <p class="environment-card-meta">${environmentMetadata(spriteCount, soundCount)}</p>
-      <span class="environment-status ${playable ? "ready" : "soon"}">${state}</span>
-    </div>
-    ${action}
-  </article>`;
-}
-
 function userEnvironmentCard(environment) {
   const name = environment.name || "Untitled environment";
   const sprites = environment.sprites || [];
   const soundCount = sprites.filter(spriteHasSound).length;
   const playable = isPlayable(environment);
   const thumbnail = environment.background?.blob
-    ? `<img class="environment-thumbnail image-thumbnail" src="${backgroundUrl(environment)}" alt="Backdrop for ${escapeHtml(name)}">`
+    ? `<img class="environment-thumbnail image-thumbnail" src="${backgroundUrl(environment)}" alt="Backdrop for ${escapeHtml(name)}" draggable="false">`
     : environment.background?.kind === "blank"
       ? `<div class="environment-thumbnail blank-thumbnail" role="img" aria-label="Blank white backdrop for ${escapeHtml(name)}"></div>`
       : `<div class="environment-thumbnail draft-thumbnail" aria-hidden="true">Draft</div>`;
@@ -741,7 +703,7 @@ function userEnvironmentCard(environment) {
   return `<article class="environment-card draft-card">
     ${thumbnail}
     <div class="environment-card-copy">
-      <p class="card-kicker">Saved on this device</p>
+      <p class="card-kicker">${environment.id === parkEnvironmentId ? "Example · saved on this device" : "Saved on this device"}</p>
       <h2>${escapeHtml(name)}</h2>
       <p>${escapeHtml(draftGuidance(environment))}</p>
       <p class="environment-card-meta">${environmentMetadata(sprites.length, soundCount)}</p>
@@ -787,28 +749,42 @@ function deleteConfirmationModal() {
   </div>`;
 }
 
+function hasParkExample() {
+  return environments.some((environment) => environment.id === parkEnvironmentId);
+}
+
 function renderLibrary() {
+  const parkButton = hasParkExample() ? "" : `<button class="add-park-example" type="button">Add the Park example</button>`;
+  const emptyNote = environments.length ? "" : `<p class="library-empty">Nothing here yet. Create an environment, or add the Park example to see how one fits together.</p>`;
   app.innerHTML = `<main class="library">
-    <header class="library-header">
-      <div>
-        <p class="eyebrow">SOUND EXPLORER</p>
-        <h1>Your environments</h1>
-        <p>Choose a starter activity or create one that stays on this device.</p>
-      </div>
+    <header class="app-topbar library-topbar">
+      ${brandMarkup()}
+      <span class="toolbar-spacer"></span>
       ${saveStatus()}
     </header>
-    <section class="environment-grid">
-      ${starterCard("Park", "Ready to play", "A working sound-matching example.", 4, 4)}
-      ${starterCard("Kitchen", "Coming soon", "This starter activity is not ready to play yet.", 3, 0)}
-      ${environments.map(userEnvironmentCard).join("")}
-    </section>
-    <button class="create-environment" type="button">Create environment</button>
-    ${recoveryGuidance()}
+    <div class="library-body">
+      <div class="library-heading">
+        <div>
+          <h1>Your environments</h1>
+          <p>Every environment stays on this device. Open one to edit it, or play it with your class.</p>
+        </div>
+        <div class="library-actions">
+          ${parkButton}
+          <button class="create-environment" type="button">${icon("sprite")}<span>Create environment</span></button>
+        </div>
+      </div>
+      ${emptyNote}
+      <section class="environment-grid">
+        ${environments.map(userEnvironmentCard).join("")}
+      </section>
+      ${recoveryGuidance()}
+    </div>
     ${deleteConfirmationModal()}
   </main>`;
+  document.querySelector(".editor-home").addEventListener("click", () => navigate({ name: "library" }));
   document.querySelector(".create-environment").addEventListener("click", createEnvironment);
+  document.querySelector(".add-park-example")?.addEventListener("click", addParkExample);
   document.querySelectorAll(".edit-environment").forEach((button) => button.addEventListener("click", () => openEditor(button.dataset.environmentId)));
-  document.querySelectorAll(".play-starter").forEach((button) => button.addEventListener("click", () => navigate({ name: "play", id: button.dataset.scene }, { origin: "library" })));
   document.querySelectorAll(".play-environment").forEach((button) => button.addEventListener("click", () => navigate({ name: "play", id: button.dataset.environmentId }, { origin: "library" })));
   bindEnvironmentMenus();
 }
@@ -822,28 +798,76 @@ function bindEnvironmentMenus() {
   document.querySelectorAll(".delete-environment").forEach((button) => button.addEventListener("click", () => askToDeleteEnvironment(button.dataset.environmentId)));
   document.querySelector(".cancel-delete-environment")?.addEventListener("click", cancelDeleteEnvironment);
   document.querySelector(".confirm-delete-environment")?.addEventListener("click", () => deleteEnvironment(pendingDeleteId));
-  // Focus lands on the first menu item when a menu opens, and on Cancel when the delete
-  // confirmation opens — never on the button that destroys the environment.
-  if (environmentMenuOpenId) document.querySelector(".environment-menu:not([hidden]) button")?.focus();
+  bindModalBackdropClose(".confirm-modal", cancelDeleteEnvironment);
+  // Focus lands on Cancel when the delete confirmation opens — never on the button that
+  // destroys the environment.
   document.querySelector(".cancel-delete-environment")?.focus();
+  showEnvironmentMenu();
+}
+
+// Clicking outside a modal's panel closes it the same way its Close control does.
+function bindModalBackdropClose(panelSelector, close) {
+  const panel = document.querySelector(panelSelector);
+  const backdrop = panel?.closest(".modal-backdrop");
+  backdrop?.addEventListener("pointerdown", (event) => {
+    if (event.target === backdrop) backdrop.dataset.pressedOutside = "true";
+  });
+  backdrop?.addEventListener("click", (event) => {
+    const pressedOutside = backdrop.dataset.pressedOutside === "true";
+    delete backdrop.dataset.pressedOutside;
+    if (event.target === backdrop && pressedOutside) close();
+  });
 }
 
 function menuTrigger(id) {
   return document.querySelector(`.environment-menu-trigger[data-environment-id="${CSS.escape(id)}"]`);
 }
 
+// The menu opens and closes in place: rebuilding the library here would reload every backdrop
+// thumbnail, which showed as a flash each time the menu was used.
+function showEnvironmentMenu() {
+  document.querySelectorAll(".environment-menu-anchor").forEach((anchor) => {
+    const trigger = anchor.querySelector(".environment-menu-trigger");
+    const open = trigger.dataset.environmentId === environmentMenuOpenId;
+    trigger.setAttribute("aria-expanded", String(open));
+    anchor.querySelector(".environment-menu").hidden = !open;
+  });
+  if (environmentMenuOpenId) document.querySelector(".environment-menu:not([hidden]) button")?.focus();
+}
+
 function toggleEnvironmentMenu(id) {
   if (environmentMenuOpenId === id) return closeEnvironmentMenu(true);
   environmentMenuOpenId = id;
-  render();
+  showEnvironmentMenu();
 }
 
 function closeEnvironmentMenu(returnFocus = false) {
   if (!environmentMenuOpenId) return;
   const id = environmentMenuOpenId;
   environmentMenuOpenId = undefined;
-  render();
+  showEnvironmentMenu();
   if (returnFocus) menuTrigger(id)?.focus();
+}
+
+// The Park example is drawn and saved on first use; if it is ever deleted it can be added back.
+async function addParkExample() {
+  if (hasParkExample()) return;
+  let park;
+  try {
+    park = await buildParkEnvironment();
+  } catch (error) {
+    saveMessage = "The Park example could not be prepared. Try again in a moment.";
+    render();
+    return;
+  }
+  const stored = await runLibraryWrite(
+    () => environmentStorage.save(park),
+    "The Park example could not be saved on this device. Check browser storage and try again.",
+  );
+  if (!stored) return;
+  environments = [park, ...environments];
+  try { localStorage.setItem(parkAddedKey, "true"); } catch (error) { /* first-run marker only */ }
+  render();
 }
 
 function askToDeleteEnvironment(id) {
@@ -866,15 +890,13 @@ function renderEditor() {
   renderedEditorRegions.clear();
   renderedBackdrop = { kind: "pending", blob: undefined };
   app.innerHTML = `<main class="editor">
-    <header class="editor-toolbar" role="toolbar" aria-label="Editor toolbar">
-      <button class="editor-home" type="button" aria-label="Home" title="Home">${icon("home")}</button>
-      <span class="project-name">${projectName}</span>
+    <header class="app-topbar editor-toolbar" role="toolbar" aria-label="Editor toolbar">
+      ${brandMarkup()}
       <button class="undo-editor" type="button" aria-label="Undo" title="Undo" disabled>${icon("undo")}</button>
       <button class="redo-editor" type="button" aria-label="Redo" title="Redo" disabled>${icon("redo")}</button>
       <label class="environment-name-label" for="environment-name">Environment name</label>
       <input class="environment-name-input" id="environment-name" value="${escapeHtml(editingEnvironment.name)}" placeholder="Untitled environment" aria-label="Environment name">
       <span class="toolbar-spacer"></span>
-      <div class="editor-controls" role="group" aria-label="Backdrop and sprites"></div>
       ${saveStatus()}
       <button class="preview-environment" type="button"></button>
     </header>
@@ -882,6 +904,7 @@ function renderEditor() {
       <section class="activity-canvas" aria-label="Activity area"></section>
       <div class="editor-feedback"></div>
     </section>
+    <div class="editor-controls" role="group" aria-label="Backdrop and sprites"></div>
     <div class="editor-modals"></div>
   </main>`;
   bindEditorShell();
@@ -905,6 +928,23 @@ function refreshEditor() {
   updateEditorRegion(".editor-modals", `${backgroundModal()}${soundFlowModal()}`, bindEditorModals);
 }
 
+// The context menu is one element for the whole canvas, rebuilt only when it opens somewhere
+// else or its sprite's sound status changes the wording.
+function refreshSpriteContextMenu(canvas) {
+  const markup = spriteContextMenuMarkup();
+  const existing = canvas.querySelector(".sprite-context-menu");
+  if (renderedEditorRegions.get(".sprite-context-menu") === markup && Boolean(existing) === Boolean(markup)) return;
+  renderedEditorRegions.set(".sprite-context-menu", markup);
+  existing?.remove();
+  if (!markup) return;
+  const holder = document.createElement("div");
+  holder.innerHTML = markup;
+  const menu = holder.firstElementChild;
+  canvas.append(menu);
+  bindSpriteActions(menu, menu.dataset.spriteId);
+  menu.querySelector("button")?.focus();
+}
+
 function updateEditorRegion(selector, markup, bind) {
   const element = document.querySelector(selector);
   if (!element) return;
@@ -914,21 +954,25 @@ function updateEditorRegion(selector, markup, bind) {
   bind?.(element);
 }
 
-// Both live in the toolbar: neither one deserves a row of its own under the backdrop. Sprites
-// stay gated until a backdrop exists, and the picker stays a real, focusable file input.
+// The control panel sits under the activity area: what the draft still needs on the left, and
+// the things to do about it on the right. Sprites stay gated until a backdrop exists, and the
+// picker stays a real, focusable file input.
 function editorControlsMarkup() {
-  if (!hasBackdrop(editingEnvironment)) {
-    return `<button class="add-sprite-disabled" type="button" disabled aria-label="Add sprite after choosing a backdrop" title="Choose a backdrop before adding sprites">${icon("sprite")}<span class="control-text">Add sprite</span></button>`;
-  }
-  return `<button class="set-background" type="button" aria-label="Change backdrop" title="Change backdrop">${icon("backdrop")}<span class="control-text">Change backdrop</span></button>
-    <label class="add-sprite" title="Add sprite image">${icon("sprite")}<span class="control-text">Add sprite</span><input class="sprite-file" aria-label="Add sprite image" type="file" accept="image/png,image/jpeg,image/webp"></label>`;
+  const ready = hasBackdrop(editingEnvironment);
+  const addSprite = ready
+    ? `<label class="add-sprite control-button" title="Add sprite image">${icon("sprite")}<span class="control-text">Add sprite</span><input class="sprite-file" aria-label="Add sprite image" type="file" accept="${acceptedImageTypes.join(",")}"></label>`
+    : `<button class="add-sprite-disabled control-button" type="button" disabled aria-label="Add sprite after choosing a backdrop" title="Choose a backdrop before adding sprites">${icon("sprite")}<span class="control-text">Add sprite</span></button>`;
+  const changeBackdrop = ready
+    ? `<button class="set-background control-button" type="button" aria-label="Change backdrop" title="Change backdrop">${icon("backdrop")}<span class="control-text">Change backdrop</span></button>`
+    : "";
+  return `<p class="editor-next-step">${escapeHtml(draftGuidance(editingEnvironment))}</p>
+    <div class="control-buttons">${changeBackdrop}${addSprite}</div>`;
 }
 
 function editorFeedbackMarkup() {
   const showBackgroundMessage = hasBackdrop(editingEnvironment) && !backgroundModalOpen;
   return `${spriteMessageMarkup()}
         ${showBackgroundMessage ? backgroundMessageMarkup() : ""}
-        <p class="editor-next-step">${escapeHtml(draftGuidance(editingEnvironment))}</p>
         ${recoveryGuidance()}`;
 }
 
@@ -958,7 +1002,7 @@ function currentBackdrop() {
 }
 
 function backdropElementMarkup(backdrop) {
-  if (backdrop.kind === "image") return `<img class="editor-backdrop" src="${blobUrl(backdrop.blob)}" alt="Environment backdrop">`;
+  if (backdrop.kind === "image") return `<img class="editor-backdrop" src="${blobUrl(backdrop.blob)}" alt="Environment backdrop" draggable="false">`;
   if (backdrop.kind === "blank") return `<div class="editor-backdrop blank-backdrop" aria-label="Blank white backdrop"></div>`;
   return `<section class="backdrop-onboarding" aria-labelledby="backdrop-onboarding-title"></section>`;
 }
@@ -1000,50 +1044,75 @@ function refreshEditorSprites(canvas, backdropReady) {
     if (!overlayElements(sprite.id).button) addSpriteElements(canvas, sprite, layer);
     updateSpriteElements(sprite, layer);
   });
-  updateSpriteMenuDom();
+  refreshSpriteContextMenu(canvas);
 }
 
 function addSpriteElements(canvas, sprite, layer) {
   const holder = document.createElement("div");
   holder.innerHTML = spriteMarkup(sprite, layer);
   [...holder.children].forEach((node) => canvas.append(node));
-  const { button, menuAnchor, transformHandles } = overlayElements(sprite.id);
+  const { button, cardAnchor, transformHandles } = overlayElements(sprite.id);
   if (button) {
     bindSpriteEvents(button);
     const image = button.querySelector("img");
     if (image) spriteImageBlobs.set(image, sprite.image.blob);
   }
-  if (menuAnchor) bindSpriteMenuAnchor(menuAnchor);
+  if (cardAnchor) {
+    renderedEditorRegions.set(cardKey(sprite.id), cardAnchor.querySelector(".sprite-card").innerHTML);
+    bindSpriteCard(cardAnchor);
+  }
   if (transformHandles) bindSpriteTransformHandles(transformHandles);
+}
+
+function cardKey(id) {
+  return `.sprite-card[${id}]`;
 }
 
 function updateSpriteElements(sprite, layer) {
   const selected = sprite.id === selectedSpriteId;
   const transform = spriteRotationTransform(sprite);
-  const { button, menuAnchor, transformHandles } = overlayElements(sprite.id);
-  [button, menuAnchor, transformHandles].forEach((element) => {
+  const { button, cardAnchor, transformHandles } = overlayElements(sprite.id);
+  [button, transformHandles].forEach((element) => {
     if (!element) return;
     element.classList.toggle("selected", selected);
     element.style.left = `${sprite.xPercent}%`;
     element.style.top = `${sprite.yPercent}%`;
     element.style.width = `${sprite.sizePercent}%`;
+    element.style.aspectRatio = String(spriteAspectRatio(sprite));
     element.style.zIndex = layer + 1;
+    element.style.transform = transform;
   });
-  if (transformHandles) transformHandles.style.transform = transform;
-  if (menuAnchor) {
-    menuAnchor.style.setProperty("--sprite-rotation", `${sprite.rotationDegrees || 0}deg`);
-    menuAnchor.querySelector(".sprite-menu-trigger")?.setAttribute("aria-label", `Sprite options for ${sprite.name}`);
+  if (cardAnchor) {
+    cardAnchor.classList.toggle("selected", selected);
+    updateSpriteCard(cardAnchor, sprite);
+    placeSpriteCardAnchor(cardAnchor, sprite, layer);
   }
   if (!button) return;
   button.setAttribute("aria-pressed", String(selected));
   button.setAttribute("aria-label", sprite.name);
-  button.style.transform = transform;
   const image = button.querySelector("img");
   if (!image) return;
   image.alt = sprite.name;
   if (spriteImageBlobs.get(image) === sprite.image.blob) return;
   spriteImageBlobs.set(image, sprite.image.blob);
   image.src = blobUrl(sprite.image.blob);
+}
+
+// The card is rebuilt only when its words change (a rename, a new sound, a preview starting),
+// so a half-typed name or the focus inside it survives every other refresh.
+function updateSpriteCard(cardAnchor, sprite) {
+  const card = cardAnchor.querySelector(".sprite-card");
+  const markup = spriteCardBodyMarkup(sprite);
+  card.setAttribute("aria-label", `Sprite options for ${sprite.name}`);
+  if (renderedEditorRegions.get(cardKey(sprite.id)) === markup) return;
+  renderedEditorRegions.set(cardKey(sprite.id), markup);
+  card.innerHTML = markup;
+  bindSpriteCard(cardAnchor);
+  if (sprite.id === renameSpriteId) {
+    const input = card.querySelector("input[name=name]");
+    input?.focus();
+    input?.select();
+  }
 }
 
 function bindEditorControls() {
@@ -1071,14 +1140,44 @@ function takeChosenFile(input) {
 }
 
 function bindEditorModals() {
-  document.querySelector(".close-sound-flow")?.addEventListener("click", cancelSoundFlow);
-  document.querySelector(".cancel-sound-flow")?.addEventListener("click", cancelSoundFlow);
-  document.querySelector(".confirm-replace-sound")?.addEventListener("click", confirmReplaceSound);
-  document.querySelector(".sound-label-form")?.addEventListener("submit", (event) => {
+  bindSoundModal();
+  bindBackgroundModal();
+}
+
+function bindSoundModal() {
+  const modal = document.querySelector(".sound-modal");
+  if (!modal) return;
+  modal.querySelector(".close-sound-flow").addEventListener("click", cancelSoundFlow);
+  modal.querySelector(".cancel-sound-flow")?.addEventListener("click", cancelSoundFlow);
+  bindModalBackdropClose(".sound-modal", cancelSoundFlow);
+  modal.querySelector(".sound-label-form")?.addEventListener("submit", (event) => {
     event.preventDefault();
     submitSoundLabel(new FormData(event.currentTarget).get("label"));
   });
-  bindBackgroundModal();
+  modal.querySelectorAll(".attach-sprite-sound-file").forEach((input) => input.addEventListener("change", () => {
+    const file = takeChosenFile(input);
+    if (file) beginAttachSound(soundFlow.spriteId, file);
+  }));
+  modal.querySelector(".remove-sprite-sound")?.addEventListener("click", removeSpriteSound);
+  const dropZone = modal.querySelector(".sound-drop-zone");
+  dropZone?.addEventListener("dragover", (event) => event.preventDefault());
+  dropZone?.addEventListener("drop", (event) => {
+    event.preventDefault();
+    event.stopPropagation();
+    const files = event.dataTransfer.files;
+    if (files.length !== 1) {
+      soundFlow = { ...soundFlow, error: "Drop one sound file at a time." };
+      refreshEditor();
+      return;
+    }
+    beginAttachSound(soundFlow.spriteId, files[0]);
+  });
+  const player = modal.querySelector(".waveform-player");
+  if (player) {
+    const sprite = soundFlowSprite();
+    const blob = player.dataset.sound === "new" ? soundFlow.file : sprite?.sound?.blob;
+    if (blob) mountWaveformPlayer(player, blob);
+  }
 }
 
 function bindEditorShell() {
@@ -1111,46 +1210,130 @@ function bindEditorShell() {
   canvas.addEventListener("click", (event) => {
     if (event.target === canvas || event.target.matches(".editor-backdrop")) deselectSprite();
   });
+  canvas.addEventListener("contextmenu", (event) => {
+    const spriteElement = event.target.closest("[data-sprite-id]");
+    if (!spriteElement || !hasBackdrop(editingEnvironment)) return;
+    event.preventDefault();
+    openSpriteContextMenu(spriteElement.dataset.spriteId, event, canvas);
+  });
   canvas.addEventListener("dragover", (event) => event.preventDefault());
   canvas.addEventListener("drop", (event) => {
     event.preventDefault();
-    const files = event.dataTransfer.files;
-    if (files.length !== 1) {
-      if (hasBackdrop(editingEnvironment)) setSpriteMessage("Drop one image at a time.");
-      else setBackgroundMessage("Drop one backdrop image at a time.");
+    dropOntoCanvas(event, canvas);
+  });
+}
+
+// Sprites render as three sibling overlays sharing one data-sprite-id (the button, its card, and
+// its resize/rotate handles) — a sound dropped on any of them lands on that sprite.
+async function dropOntoCanvas(event, canvas) {
+  const files = event.dataTransfer.files;
+  if (files.length > 1) {
+    if (hasBackdrop(editingEnvironment)) setSpriteMessage("Drop one image at a time.");
+    else setBackgroundMessage("Drop one backdrop image at a time.");
+    refreshEditor();
+    return;
+  }
+  const position = dropPosition(event, canvas);
+  const file = files[0] || await fileFromDraggedWebImage(event.dataTransfer);
+  if (!file) {
+    const message = "That image could not be brought across from the other page. Right-click it, choose Copy image, and paste it here instead.";
+    if (hasBackdrop(editingEnvironment)) setSpriteMessage(message);
+    else setBackgroundMessage(message);
+    refreshEditor();
+    return;
+  }
+  if (!hasBackdrop(editingEnvironment)) {
+    if (file.type.startsWith("audio/")) {
+      setBackgroundMessage("Choose a backdrop before adding sprites or sounds.");
       refreshEditor();
       return;
     }
-    const file = files[0];
-    if (!hasBackdrop(editingEnvironment)) {
-      if (file.type.startsWith("audio/")) {
-        setBackgroundMessage("Choose a backdrop before adding sprites or sounds.");
-        refreshEditor();
-        return;
-      }
-      selectBackground(file);
+    selectBackground(file);
+    return;
+  }
+  if (file.type.startsWith("audio/")) {
+    const targetSprite = event.target.closest("[data-sprite-id]");
+    if (!targetSprite || targetSprite.dataset.spriteId !== selectedSpriteId) {
+      setSpriteMessage("Drop the sound onto a sprite to attach it.");
+      refreshEditor();
       return;
     }
-    if (file.type.startsWith("audio/")) {
-      // Sprites render as three sibling overlays sharing one data-sprite-id (the button, its
-      // three-dot menu, and its resize/rotate handles) — match any of them, not just the button.
-      const targetSprite = event.target.closest("[data-sprite-id]");
-      if (!targetSprite || targetSprite.dataset.spriteId !== selectedSpriteId) {
-        setSpriteMessage("Drop the sound onto a sprite to attach it.");
-        refreshEditor();
-        return;
-      }
-      beginAttachSound(targetSprite.dataset.spriteId, file);
-      return;
-    }
-    addSpriteFromFile(file, dropPosition(event, canvas));
-  });
+    beginAttachSound(targetSprite.dataset.spriteId, file);
+    return;
+  }
+  addSpriteFromFile(file, position);
+}
+
+// An image dragged straight from another browser tab arrives as an address, not a file. If the
+// other site allows it, the image is fetched and used as though it had been dropped from disk.
+async function fileFromDraggedWebImage(dataTransfer) {
+  const url = draggedImageUrl(dataTransfer);
+  if (!url) return undefined;
+  try {
+    const response = await fetch(url, { mode: "cors" });
+    if (!response.ok) return undefined;
+    const blob = await response.blob();
+    if (!acceptedImageTypes.includes(blob.type)) return undefined;
+    const name = new URL(url).pathname.split("/").pop() || "image";
+    return new File([blob], name, { type: blob.type });
+  } catch (error) {
+    return undefined;
+  }
+}
+
+function draggedImageUrl(dataTransfer) {
+  const html = dataTransfer.getData("text/html");
+  const source = html && new DOMParser().parseFromString(html, "text/html").querySelector("img")?.getAttribute("src");
+  const listed = dataTransfer.getData("text/uri-list").split("\n").find((line) => line && !line.startsWith("#"));
+  const candidate = source || listed || dataTransfer.getData("text/plain");
+  return /^https?:\/\//.test(candidate || "") ? candidate : undefined;
+}
+
+// A pasted image goes wherever a dropped one would: it becomes the backdrop until there is one,
+// and a sprite afterwards. Pasting with the backdrop window open always replaces the backdrop.
+function pasteIntoEditor(event) {
+  if (isTypingTarget(event.target)) return;
+  const file = [...(event.clipboardData?.files || [])].find((item) => item.type.startsWith("image/"));
+  if (file) {
+    event.preventDefault();
+    if (backgroundModalOpen || !hasBackdrop(editingEnvironment)) selectBackground(file);
+    else addSpriteFromFile(file);
+    return;
+  }
+  if (spriteClipboard && hasBackdrop(editingEnvironment) && !soundFlow && !backgroundModalOpen) {
+    event.preventDefault();
+    pasteSprite();
+  }
+}
+
+function isTypingTarget(element) {
+  return Boolean(element?.closest?.("input, textarea, select, [contenteditable=true]"));
+}
+
+// Keyboard shortcuts for the selected sprite: copy, paste, duplicate, and delete. The name
+// field and modal forms keep their own keys.
+function editorKeyboardShortcut(event) {
+  if (isTypingTarget(event.target) || soundFlow || backgroundModalOpen) return;
+  const command = event.metaKey || event.ctrlKey;
+  const key = event.key.toLowerCase();
+  if (command && key === "c" && selectedSpriteId) {
+    copySprite(selectedSpriteId);
+    event.preventDefault();
+  } else if (command && key === "d" && selectedSpriteId) {
+    duplicateSprite(selectedSpriteId);
+    event.preventDefault();
+  } else if (command && key === "z") {
+    restoreEditorHistory(event.shiftKey ? redoStack : undoStack, event.shiftKey ? undoStack : redoStack);
+    event.preventDefault();
+  } else if ((event.key === "Delete" || event.key === "Backspace") && selectedSpriteId && !command) {
+    deleteSprite(selectedSpriteId);
+    event.preventDefault();
+  }
 }
 
 function render() {
   clearRenderObjectUrls();
-  // A full render discards every object URL, so any cached preview URL has to be remade.
-  if (soundFlow) soundFlow = { ...soundFlow, previewUrl: undefined };
+  stopSpritePreview();
   document.body.dataset.view = view;
   if (view === "library") return renderLibrary();
   if (view === "editor") return renderEditor();
@@ -1180,9 +1363,10 @@ function clearEditorSession() {
   backgroundModalOpen = false;
   backgroundConfirmation = { action: "none" };
   resetEditorMessages();
+  stopSpritePreview();
   soundFlow = undefined;
-  spriteMenuOpenId = undefined;
-  spriteMenuMode = "actions";
+  spriteMenu = undefined;
+  renameSpriteId = undefined;
 }
 
 function enterLibrary() {
@@ -1217,20 +1401,13 @@ function enterEditor(id) {
 }
 
 function enterActivity(id, origin) {
-  if (starterSceneIds.includes(id)) {
-    activeScene = id;
-    activeEnvironment = undefined;
-  } else {
-    const environment = environments.find((item) => item.id === id);
-    if (!environment) return fallBackToLibrary();
-    activeEnvironment = environment;
-  }
-  activityOrigin = activeEnvironment && origin === "editor" ? "editor" : "library";
+  const environment = environments.find((item) => item.id === id);
+  if (!environment) return fallBackToLibrary();
+  activeEnvironment = environment;
+  activityOrigin = origin === "editor" ? "editor" : "library";
   currentSound = undefined;
   completedRounds = 0;
   activityFinished = false;
-  modalOpen = false;
-  spriteModalOpen = false;
   view = "activity";
   render();
 }
@@ -1255,35 +1432,45 @@ async function addSpriteFromFile(file, position = { xPercent: 50, yPercent: 50 }
     return;
   }
   setSpriteMessage("");
+  // Transparent margins are trimmed away so the sprite's box hugs what is actually drawn.
+  const measured = await measureSpriteImage(file);
   const sprite = {
     id: crypto.randomUUID(),
     name: spriteNameFromFilename(file.name),
-    image: { blob: file.slice(0, file.size, file.type) },
+    image: { blob: measured.blob },
     xPercent: position.xPercent,
     yPercent: position.yPercent,
     sizePercent: defaultSpriteSizePercent,
+    aspectRatio: measured.aspectRatio,
   };
   selectedSpriteId = sprite.id;
   await commitEditorMutation({ ...editingEnvironment, sprites: [...(editingEnvironment.sprites || []), sprite] });
 }
 
-function constrainedPercent(point, start, length, sizePercent) {
-  const halfSize = sizePercent / 2;
-  return Math.max(halfSize, Math.min(100 - halfSize, ((point - start) / length) * 100));
+// Half of a sprite's upright footprint, as percentages of the activity area on each axis.
+function spriteHalfExtents(sprite) {
+  const footprint = spriteFootprint(sprite);
+  return { xPercent: footprint.widthPercent / 2, yPercent: footprint.heightPercent / 2 };
+}
+
+function constrainedPercent(point, start, length, halfExtentPercent) {
+  return Math.max(halfExtentPercent, Math.min(100 - halfExtentPercent, ((point - start) / length) * 100));
 }
 
 function dropPosition(event, canvas) {
   const bounds = canvas.getBoundingClientRect();
+  const half = spriteHalfExtents({ sizePercent: defaultSpriteSizePercent, aspectRatio: 1 });
   return {
-    xPercent: constrainedPercent(event.clientX, bounds.left, bounds.width, defaultSpriteSizePercent),
-    yPercent: constrainedPercent(event.clientY, bounds.top, bounds.height, defaultSpriteSizePercent),
+    xPercent: constrainedPercent(event.clientX, bounds.left, bounds.width, half.xPercent),
+    yPercent: constrainedPercent(event.clientY, bounds.top, bounds.height, half.yPercent),
   };
 }
 
 function draggedSpritePosition(event, drag) {
+  const half = spriteHalfExtents(drag.sprite);
   return {
-    xPercent: constrainedPercent(drag.startCanvasX + event.clientX - drag.startPointerX, drag.bounds.left, drag.bounds.width, drag.sprite.sizePercent),
-    yPercent: constrainedPercent(drag.startCanvasY + event.clientY - drag.startPointerY, drag.bounds.top, drag.bounds.height, drag.sprite.sizePercent),
+    xPercent: constrainedPercent(drag.startCanvasX + event.clientX - drag.startPointerX, drag.bounds.left, drag.bounds.width, half.xPercent),
+    yPercent: constrainedPercent(drag.startCanvasY + event.clientY - drag.startPointerY, drag.bounds.top, drag.bounds.height, half.yPercent),
   };
 }
 
@@ -1296,7 +1483,7 @@ function overlayElements(id) {
   const escaped = CSS.escape(id);
   return {
     button: document.querySelector(`.editor-sprite[data-sprite-id="${escaped}"]`),
-    menuAnchor: document.querySelector(`.sprite-menu-anchor[data-sprite-id="${escaped}"]`),
+    cardAnchor: document.querySelector(`.sprite-card-anchor[data-sprite-id="${escaped}"]`),
     transformHandles: document.querySelector(`.sprite-transform-handles[data-sprite-id="${escaped}"]`),
   };
 }
@@ -1304,24 +1491,29 @@ function overlayElements(id) {
 function showSelectedSprite(id) {
   editingEnvironment.sprites.forEach((sprite, layer) => {
     const selected = sprite.id === id;
-    const { button, menuAnchor, transformHandles } = overlayElements(sprite.id);
+    const { button, cardAnchor, transformHandles } = overlayElements(sprite.id);
     if (button) {
       button.classList.toggle("selected", selected);
       button.setAttribute("aria-pressed", String(selected));
       button.style.zIndex = layer + 1;
     }
-    [menuAnchor, transformHandles].forEach((element) => {
+    [cardAnchor, transformHandles].forEach((element) => {
       if (!element) return;
       element.classList.toggle("selected", selected);
       element.style.zIndex = layer + 1;
     });
+    if (selected && cardAnchor) placeSpriteCardAnchor(cardAnchor, sprite, layer);
   });
 }
 
 function selectSprite(id) {
   const currentSprites = editingEnvironment.sprites || [];
   if (selectedSpriteId === id && currentSprites.at(-1)?.id === id) return;
-  if (selectedSpriteId !== id) closeSpriteMenu();
+  if (selectedSpriteId !== id) {
+    closeSpriteMenu();
+    cancelSpriteRename();
+    stopSpritePreview();
+  }
   selectedSpriteId = id;
   if (currentSprites.at(-1)?.id === id) {
     showSelectedSprite(id);
@@ -1336,8 +1528,59 @@ function selectSprite(id) {
 function deselectSprite() {
   if (!selectedSpriteId) return;
   closeSpriteMenu();
+  cancelSpriteRename();
+  stopSpritePreview();
   selectedSpriteId = undefined;
   showSelectedSprite();
+}
+
+// A copy keeps everything about the original — image, sound, size, rotation — under a new
+// identity, and lands a little down and to the right so both are visible.
+function spriteCopy(sprite, offsetPercent = 3) {
+  const half = spriteHalfExtents(sprite);
+  return {
+    ...sprite,
+    id: crypto.randomUUID(),
+    image: copiedMedia(sprite.image),
+    sound: copiedMedia(sprite.sound),
+    xPercent: clampPercent(sprite.xPercent + offsetPercent, half.xPercent, 100 - half.xPercent),
+    yPercent: clampPercent(sprite.yPercent + offsetPercent * canvasAspectRatio, half.yPercent, 100 - half.yPercent),
+  };
+}
+
+function copySprite(id) {
+  const sprite = editingEnvironment.sprites.find((item) => item.id === id);
+  if (!sprite) return;
+  spriteClipboard = snapshotEnvironment({ ...editingEnvironment, sprites: [sprite] }).sprites[0];
+  setSpriteMessage(`Copied ${sprite.name}. Paste to add a copy.`);
+  refreshEditor();
+}
+
+function pasteSprite() {
+  if (!spriteClipboard) return;
+  const copy = spriteCopy(spriteClipboard);
+  closeSpriteMenu();
+  selectedSpriteId = copy.id;
+  setSpriteMessage("");
+  commitEditorMutation({ ...editingEnvironment, sprites: [...(editingEnvironment.sprites || []), copy] });
+}
+
+function duplicateSprite(id) {
+  const sprite = editingEnvironment.sprites.find((item) => item.id === id);
+  if (!sprite) return;
+  const copy = spriteCopy(sprite);
+  closeSpriteMenu();
+  selectedSpriteId = copy.id;
+  commitEditorMutation({ ...editingEnvironment, sprites: [...editingEnvironment.sprites, copy] });
+}
+
+// Option-drag (Alt-drag) leaves the original where it is and drags a fresh copy away from it.
+function duplicateSpriteInPlace(sprite) {
+  const copy = spriteCopy(sprite, 0);
+  editingEnvironment = { ...editingEnvironment, sprites: [...editingEnvironment.sprites, copy] };
+  selectedSpriteId = copy.id;
+  refreshEditorCanvas();
+  return copy;
 }
 
 function moveSpriteToFront(id) {
@@ -1356,15 +1599,8 @@ function updateSpritePosition(id, position) {
 }
 
 function showDraggedSprite(element, position) {
-  element.style.left = `${position.xPercent}%`;
-  element.style.top = `${position.yPercent}%`;
   showSelectedSprite(element.dataset.spriteId);
-  const { menuAnchor, transformHandles } = overlayElements(element.dataset.spriteId);
-  [menuAnchor, transformHandles].forEach((overlay) => {
-    if (!overlay) return;
-    overlay.style.left = element.style.left;
-    overlay.style.top = element.style.top;
-  });
+  showSpritePosition(element.dataset.spriteId, position.xPercent, position.yPercent);
 }
 
 function dragStart(event, element, sprite, canvas) {
@@ -1386,31 +1622,42 @@ function bindSpriteEvents(element) {
     selectSprite(element.dataset.spriteId);
   });
   element.addEventListener("pointerdown", (event) => {
+    if (event.button === 2) return;
     event.preventDefault();
     event.stopPropagation();
-    const sprite = editingEnvironment.sprites.find((item) => item.id === element.dataset.spriteId);
+    let sprite = editingEnvironment.sprites.find((item) => item.id === element.dataset.spriteId);
     if (!sprite) return;
     const canvas = document.querySelector(".activity-canvas");
     const beforeGesture = snapshotEnvironment(editingEnvironment);
+    closeSpriteMenu();
+    if (selectedSpriteId !== sprite.id) {
+      cancelSpriteRename();
+      stopSpritePreview();
+    }
+    let dragged = element;
+    if (event.altKey) {
+      sprite = duplicateSpriteInPlace(sprite);
+      dragged = overlayElements(sprite.id).button;
+    }
     moveSpriteToFront(sprite.id);
     showSelectedSprite(sprite.id);
-    element.setPointerCapture(event.pointerId);
-    const drag = dragStart(event, element, sprite, canvas);
+    dragged.setPointerCapture(event.pointerId);
+    const drag = dragStart(event, dragged, sprite, canvas);
     const move = (moveEvent) => {
       const position = draggedSpritePosition(moveEvent, drag);
       updateSpritePosition(sprite.id, position);
-      showDraggedSprite(element, position);
+      showDraggedSprite(dragged, position);
     };
     const finish = () => {
-      element.removeEventListener("pointermove", move);
-      element.removeEventListener("pointerup", finish);
-      element.removeEventListener("pointercancel", finish);
-      if (element.hasPointerCapture(event.pointerId)) element.releasePointerCapture(event.pointerId);
+      dragged.removeEventListener("pointermove", move);
+      dragged.removeEventListener("pointerup", finish);
+      dragged.removeEventListener("pointercancel", finish);
+      if (dragged.hasPointerCapture(event.pointerId)) dragged.releasePointerCapture(event.pointerId);
       commitEditorGesture(beforeGesture);
     };
-    element.addEventListener("pointermove", move);
-    element.addEventListener("pointerup", finish, { once: true });
-    element.addEventListener("pointercancel", finish, { once: true });
+    dragged.addEventListener("pointermove", move);
+    dragged.addEventListener("pointerup", finish, { once: true });
+    dragged.addEventListener("pointercancel", finish, { once: true });
   });
 }
 
@@ -1432,42 +1679,65 @@ function updateSpriteGeometry(id, changes) {
   };
 }
 
+// The card anchor follows the sprite's upright footprint, so any change to size, rotation, or
+// position re-derives it from the sprite record rather than copying one style across.
+function showSpriteCardAnchor(id) {
+  const layer = editingEnvironment.sprites.findIndex((item) => item.id === id);
+  const sprite = editingEnvironment.sprites[layer];
+  const { cardAnchor } = overlayElements(id);
+  if (sprite && cardAnchor) placeSpriteCardAnchor(cardAnchor, sprite, layer);
+}
+
+// The card flips above a sprite that sits near the bottom edge, and slides sideways just enough
+// to stay inside the activity area when the sprite is near either side.
+function placeSpriteCardAnchor(cardAnchor, sprite, layer) {
+  cardAnchor.style.cssText = spriteFootprintStyle(sprite, layer);
+  const footprint = spriteFootprint(sprite);
+  cardAnchor.classList.toggle("card-above", sprite.yPercent + footprint.heightPercent / 2 > 82);
+  const canvas = cardAnchor.parentElement;
+  const card = cardAnchor.querySelector(".sprite-card");
+  if (!canvas || !card) return;
+  const canvasWidth = canvas.clientWidth;
+  const cardWidth = card.offsetWidth;
+  const centerPx = (sprite.xPercent / 100) * canvasWidth;
+  const margin = 8;
+  const shift = Math.min(0, canvasWidth - margin - (centerPx + cardWidth / 2)) + Math.max(0, margin - (centerPx - cardWidth / 2));
+  card.style.setProperty("--card-shift", `${Math.round(shift)}px`);
+}
+
 function showSpriteSize(id, sizePercent) {
-  const { button, menuAnchor, transformHandles } = overlayElements(id);
-  [button, menuAnchor, transformHandles].forEach((element) => { if (element) element.style.width = `${sizePercent}%`; });
+  const { button, transformHandles } = overlayElements(id);
+  [button, transformHandles].forEach((element) => { if (element) element.style.width = `${sizePercent}%`; });
+  showSpriteCardAnchor(id);
 }
 
 function showSpriteRotation(id, rotationDegrees) {
   const transform = spriteRotationTransform({ rotationDegrees });
-  const { button, menuAnchor, transformHandles } = overlayElements(id);
+  const { button, transformHandles } = overlayElements(id);
   if (button) button.style.transform = transform;
   if (transformHandles) transformHandles.style.transform = transform;
-  if (menuAnchor) menuAnchor.style.setProperty("--sprite-rotation", `${rotationDegrees || 0}deg`);
+  showSpriteCardAnchor(id);
 }
 
 function showSpritePosition(id, xPercent, yPercent) {
-  const { button, menuAnchor, transformHandles } = overlayElements(id);
-  [button, menuAnchor, transformHandles].forEach((element) => {
+  const { button, transformHandles } = overlayElements(id);
+  [button, transformHandles].forEach((element) => {
     if (!element) return;
     element.style.left = `${xPercent}%`;
     element.style.top = `${yPercent}%`;
   });
+  showSpriteCardAnchor(id);
 }
 
-// A rotated square's on-screen (axis-aligned) footprint is wider than its own side length —
-// up to sqrt(2)x at 45deg. Use that footprint, not the raw sizePercent, when keeping a
-// resized or rotated sprite's center far enough from the canvas edge to stay recoverable.
-function spriteFootprintPercent(sprite) {
-  const angleRad = ((sprite.rotationDegrees || 0) * Math.PI) / 180;
-  return sprite.sizePercent * (Math.abs(Math.cos(angleRad)) + Math.abs(Math.sin(angleRad)));
-}
-
+// A rotated sprite's on-screen (axis-aligned) footprint is wider than its own sides — use that
+// footprint when keeping a resized or rotated sprite's center far enough from the edge to stay
+// recoverable.
 function keepSpriteRecoverable(id) {
   const sprite = editingEnvironment.sprites.find((item) => item.id === id);
   if (!sprite) return;
-  const halfFootprint = spriteFootprintPercent(sprite) / 2;
-  const xPercent = clampPercent(sprite.xPercent, halfFootprint, 100 - halfFootprint);
-  const yPercent = clampPercent(sprite.yPercent, halfFootprint, 100 - halfFootprint);
+  const half = spriteHalfExtents(sprite);
+  const xPercent = clampPercent(sprite.xPercent, half.xPercent, 100 - half.xPercent);
+  const yPercent = clampPercent(sprite.yPercent, half.yPercent, 100 - half.yPercent);
   if (xPercent === sprite.xPercent && yPercent === sprite.yPercent) return;
   updateSpriteGeometry(id, { xPercent, yPercent });
   showSpritePosition(id, xPercent, yPercent);
@@ -1511,8 +1781,10 @@ function startResizeSprite(event, id, handle) {
     const localX = dx * Math.cos(-angleRad) - dy * Math.sin(-angleRad);
     const localY = dx * Math.sin(-angleRad) + dy * Math.cos(-angleRad);
     const halfSizeFloorPx = 6; // keeps the box from collapsing to zero directly under the pointer
-    const halfSizePx = Math.max(halfSizeFloorPx, (Math.abs(localX) + Math.abs(localY)) / 2);
-    const sizePercent = clampPercent(((halfSizePx * 2) / bounds.width) * 100, minSpriteSizePercent, maxSpriteSizePercent);
+    // The box keeps the image's shape, so whichever axis the pointer has pulled furthest sets
+    // the new width and the height follows.
+    const halfWidthPx = Math.max(halfSizeFloorPx, Math.abs(localX), Math.abs(localY) * spriteAspectRatio(sprite));
+    const sizePercent = clampPercent(((halfWidthPx * 2) / bounds.width) * 100, minSpriteSizePercent, maxSpriteSizePercent);
     updateSpriteGeometry(id, { sizePercent });
     showSpriteSize(id, sizePercent);
     keepSpriteRecoverable(id);
@@ -1553,92 +1825,80 @@ function bindSpriteTransformHandles(container) {
   rotateHandle?.addEventListener("pointerdown", (event) => startRotateSprite(event, id, rotateHandle));
 }
 
-function bindSpriteMenuAnchor(anchor) {
+function bindSpriteCard(anchor) {
   const id = anchor.dataset.spriteId;
-  anchor.querySelector(".sprite-menu-trigger").addEventListener("click", (event) => {
-    event.stopPropagation();
-    toggleSpriteMenu(id);
+  const card = anchor.querySelector(".sprite-card");
+  // Pointer events inside the card must not start a drag or count as a click on the canvas.
+  card.addEventListener("pointerdown", (event) => event.stopPropagation());
+  card.addEventListener("click", (event) => event.stopPropagation());
+  bindSpriteActions(card, id);
+  card.querySelector(".preview-sprite-sound")?.addEventListener("click", () => toggleSpritePreview(id));
+  card.querySelector(".cancel-sprite-rename")?.addEventListener("click", cancelSpriteRename);
+  const renameInput = card.querySelector(".sprite-rename-form input");
+  renameInput?.addEventListener("keydown", (event) => {
+    if (event.key === "Escape") {
+      event.stopPropagation();
+      cancelSpriteRename();
+    }
   });
-  bindSpriteMenuBody(anchor, id);
 }
 
-function bindSpriteMenuBody(anchor, id) {
-  anchor.querySelector(".rename-sprite")?.addEventListener("click", (event) => {
+// The card and the context menu share one set of actions, so both bind the same way.
+function bindSpriteActions(container, id) {
+  container.querySelector(".rename-sprite")?.addEventListener("click", (event) => {
     event.stopPropagation();
     openSpriteRename(id);
   });
-  anchor.querySelector(".delete-sprite")?.addEventListener("click", (event) => {
+  container.querySelector(".delete-sprite")?.addEventListener("click", (event) => {
     event.stopPropagation();
     deleteSprite(id);
   });
-  anchor.querySelector(".replace-sprite-image-file")?.addEventListener("click", (event) => event.stopPropagation());
-  anchor.querySelector(".replace-sprite-image-file")?.addEventListener("change", (event) => {
-    replaceSpriteImage(id, event.target.files[0]);
+  container.querySelector(".duplicate-sprite")?.addEventListener("click", (event) => {
+    event.stopPropagation();
+    duplicateSprite(id);
   });
-  anchor.querySelector(".attach-sprite-sound-file")?.addEventListener("click", (event) => event.stopPropagation());
-  anchor.querySelector(".attach-sprite-sound-file")?.addEventListener("change", (event) => {
-    closeSpriteMenu();
-    beginAttachSound(id, event.target.files[0]);
+  container.querySelector(".open-sprite-sound")?.addEventListener("click", (event) => {
+    event.stopPropagation();
+    openSpriteSound(id);
   });
-  anchor.querySelector(".sprite-rename-form")?.addEventListener("submit", (event) => {
+  const imageInput = container.querySelector(".replace-sprite-image-file");
+  imageInput?.addEventListener("click", (event) => event.stopPropagation());
+  imageInput?.addEventListener("change", () => replaceSpriteImage(id, takeChosenFile(imageInput)));
+  container.querySelector(".sprite-rename-form")?.addEventListener("submit", (event) => {
     event.preventDefault();
     event.stopPropagation();
     submitSpriteRename(id, new FormData(event.currentTarget).get("name"));
   });
 }
 
-function focusFirstSpriteMenuControl() {
-  document.querySelector(".sprite-menu-anchor.selected .sprite-menu:not([hidden]) input, .sprite-menu-anchor.selected .sprite-menu:not([hidden]) button")?.focus();
+function openSpriteContextMenu(id, event, canvas) {
+  const bounds = canvas.getBoundingClientRect();
+  selectSprite(id);
+  spriteMenu = {
+    spriteId: id,
+    xPercent: ((event.clientX - bounds.left) / bounds.width) * 100,
+    yPercent: ((event.clientY - bounds.top) / bounds.height) * 100,
+  };
+  refreshSpriteContextMenu(canvas);
 }
 
-function updateSpriteMenuDom() {
-  document.querySelectorAll(".sprite-menu-anchor").forEach((anchor) => {
-    const id = anchor.dataset.spriteId;
-    const sprite = (editingEnvironment.sprites || []).find((item) => item.id === id);
-    const open = Boolean(id === spriteMenuOpenId && sprite);
-    const trigger = anchor.querySelector(".sprite-menu-trigger");
-    const menu = anchor.querySelector(".sprite-menu");
-    const markup = open ? spriteMenuBodyMarkup(sprite) : "";
-    trigger.setAttribute("aria-expanded", String(open));
-    menu.hidden = !open;
-    // Rebuild the menu only when its content really changes, so a refresh can never throw away
-    // a half-typed rename or the focus sitting inside an open menu.
-    if (renderedSpriteMenus.get(menu) === markup) return;
-    renderedSpriteMenus.set(menu, markup);
-    menu.innerHTML = markup;
-    if (open) bindSpriteMenuBody(anchor, id);
-  });
-}
-
-function toggleSpriteMenu(id) {
-  spriteMenuOpenId = spriteMenuOpenId === id ? undefined : id;
-  spriteMenuMode = "actions";
-  updateSpriteMenuDom();
-  if (spriteMenuOpenId) focusFirstSpriteMenuControl();
-}
-
-function closeSpriteMenu(returnFocus = false) {
-  if (!spriteMenuOpenId) return;
-  const id = spriteMenuOpenId;
-  spriteMenuOpenId = undefined;
-  spriteMenuMode = "actions";
-  updateSpriteMenuDom();
-  if (returnFocus) document.querySelector(`.sprite-menu-anchor[data-sprite-id="${CSS.escape(id)}"] .sprite-menu-trigger`)?.focus();
+function closeSpriteMenu() {
+  if (!spriteMenu) return;
+  spriteMenu = undefined;
+  const canvas = document.querySelector(".activity-canvas");
+  if (canvas) refreshSpriteContextMenu(canvas);
 }
 
 function openSpriteRename(id) {
-  spriteMenuOpenId = id;
-  spriteMenuMode = "rename";
-  updateSpriteMenuDom();
-  focusFirstSpriteMenuControl();
+  closeSpriteMenu();
+  renameSpriteId = id;
+  refreshEditorCanvas();
 }
 
-function updateSpriteNameDom(id, name) {
-  const button = document.querySelector(`.editor-sprite[data-sprite-id="${CSS.escape(id)}"]`);
-  button?.setAttribute("aria-label", name);
-  if (button?.querySelector("img")) button.querySelector("img").alt = name;
-  const trigger = document.querySelector(`.sprite-menu-anchor[data-sprite-id="${CSS.escape(id)}"] .sprite-menu-trigger`);
-  trigger?.setAttribute("aria-label", `Sprite options for ${name}`);
+function cancelSpriteRename() {
+  if (!renameSpriteId) return;
+  renameSpriteId = undefined;
+  refreshEditorCanvas();
 }
 
 function submitSpriteRename(id, rawName) {
@@ -1649,36 +1909,70 @@ function submitSpriteRename(id, rawName) {
     return;
   }
   setSpriteMessage("");
+  renameSpriteId = undefined;
   const environment = {
     ...editingEnvironment,
     sprites: editingEnvironment.sprites.map((sprite) => sprite.id === id ? { ...sprite, name } : sprite),
   };
-  updateSpriteNameDom(id, name);
-  closeSpriteMenu();
   commitEditorMutation(environment);
+  refreshEditorCanvas();
+}
+
+// Hearing a sprite's sound from its card uses a separate player from the learner activity, so
+// stopping a preview never touches a game in progress elsewhere.
+function toggleSpritePreview(id) {
+  if (spritePreviewId === id) {
+    stopSpritePreview();
+    return;
+  }
+  const sprite = editingEnvironment.sprites.find((item) => item.id === id);
+  if (!spriteHasSound(sprite)) return;
+  stopSpritePreview();
+  const url = URL.createObjectURL(sprite.sound.blob);
+  spritePreviewAudio = new Audio(url);
+  spritePreviewId = id;
+  const finish = () => {
+    if (spritePreviewId === id) stopSpritePreview();
+  };
+  spritePreviewAudio.addEventListener("ended", finish, { once: true });
+  spritePreviewAudio.addEventListener("error", () => {
+    finish();
+    setSpriteMessage("This sound could not be played. Open it and replace the audio file.");
+    refreshEditor();
+  }, { once: true });
+  spritePreviewAudio.play().catch(() => {});
+  refreshEditorCanvas();
+}
+
+function stopSpritePreview() {
+  if (!spritePreviewAudio) return;
+  spritePreviewAudio.pause();
+  URL.revokeObjectURL(spritePreviewAudio.src);
+  spritePreviewAudio = undefined;
+  spritePreviewId = undefined;
+  if (view === "editor" && document.querySelector(".activity-canvas")) refreshEditorCanvas();
 }
 
 async function replaceSpriteImage(id, file) {
+  closeSpriteMenu();
   const error = await imageValidationError(file, validateImage);
   if (error) {
     setSpriteMessage(error);
-    spriteMenuOpenId = undefined;
-    spriteMenuMode = "actions";
     refreshEditor();
     return;
   }
   setSpriteMessage("");
-  spriteMenuOpenId = undefined;
-  spriteMenuMode = "actions";
-  const sprites = editingEnvironment.sprites.map((sprite) => sprite.id === id ? { ...sprite, image: { blob: file.slice(0, file.size, file.type) } } : sprite);
+  const measured = await measureSpriteImage(file);
+  const sprites = editingEnvironment.sprites.map((sprite) => sprite.id === id ? { ...sprite, image: { blob: measured.blob }, aspectRatio: measured.aspectRatio } : sprite);
   await commitEditorMutation({ ...editingEnvironment, sprites });
 }
 
 function deleteSprite(id) {
   if (!editingEnvironment.sprites.some((sprite) => sprite.id === id)) return;
   const sprites = editingEnvironment.sprites.filter((item) => item.id !== id);
-  spriteMenuOpenId = undefined;
-  spriteMenuMode = "actions";
+  spriteMenu = undefined;
+  renameSpriteId = undefined;
+  if (spritePreviewId === id) stopSpritePreview();
   selectedSpriteId = undefined;
   commitEditorMutation({ ...editingEnvironment, sprites });
 }
@@ -1731,33 +2025,40 @@ async function audioValidationError(file) {
   return "";
 }
 
+// Opening a sprite's sound shows what it has; a sprite without one goes straight to choosing.
+function openSpriteSound(spriteId) {
+  closeSpriteMenu();
+  stopSpritePreview();
+  const sprite = editingEnvironment.sprites.find((item) => item.id === spriteId);
+  if (!sprite) return;
+  soundFlow = { spriteId, stage: spriteHasSound(sprite) ? "view" : "choose" };
+  refreshEditor();
+}
+
 async function beginAttachSound(spriteId, file) {
   const error = await audioValidationError(file);
   if (error) {
-    setSpriteMessage(error);
+    if (soundFlow?.spriteId === spriteId) soundFlow = { ...soundFlow, error };
+    else setSpriteMessage(error);
     refreshEditor();
     return;
   }
   setSpriteMessage("");
+  stopSpritePreview();
   const sprite = editingEnvironment.sprites.find((item) => item.id === spriteId);
-  const hasSound = Boolean(sprite?.sound);
+  const replacing = spriteHasSound(sprite);
   soundFlow = {
     spriteId,
     file,
-    label: spriteNameFromFilename(file.name),
-    replacing: hasSound,
-    stage: hasSound ? "confirm-replace" : "label",
+    label: replacing ? sprite.sound.label : spriteNameFromFilename(file.name),
+    replacing,
+    stage: "label",
   };
   refreshEditor();
 }
 
 function cancelSoundFlow() {
   soundFlow = undefined;
-  refreshEditor();
-}
-
-function confirmReplaceSound() {
-  soundFlow = { ...soundFlow, stage: "label" };
   refreshEditor();
 }
 
@@ -1768,14 +2069,29 @@ async function submitSoundLabel(rawLabel) {
     refreshEditor();
     return;
   }
-  const { spriteId, file } = soundFlow;
-  const sprites = editingEnvironment.sprites.map((sprite) => sprite.id === spriteId
-    ? { ...sprite, sound: { blob: file.slice(0, file.size, file.type), label } }
-    : sprite);
+  const { spriteId, file, stage } = soundFlow;
+  const sprites = editingEnvironment.sprites.map((sprite) => {
+    if (sprite.id !== spriteId) return sprite;
+    if (stage === "view") return { ...sprite, sound: { ...sprite.sound, label } };
+    return { ...sprite, sound: { blob: file.slice(0, file.size, file.type), label } };
+  });
   soundFlow = undefined;
   await commitEditorMutation({ ...editingEnvironment, sprites });
 }
 
+async function removeSpriteSound() {
+  const { spriteId } = soundFlow;
+  const sprites = editingEnvironment.sprites.map((sprite) => {
+    if (sprite.id !== spriteId) return sprite;
+    const { sound: _removed, ...rest } = sprite;
+    return rest;
+  });
+  soundFlow = undefined;
+  await commitEditorMutation({ ...editingEnvironment, sprites });
+}
+
+// Every new backdrop passes through the cropper, where the educator zooms and positions the
+// image inside the 16:9 frame. Confirming there is the deliberate step that replaces a backdrop.
 async function selectBackground(file) {
   const error = await imageValidationError(file, validateBackground);
   if (error) {
@@ -1783,12 +2099,15 @@ async function selectBackground(file) {
     refreshEditor();
     return;
   }
-  if (editingEnvironment.background?.blob) {
-    backgroundConfirmation = { action: "replace", file };
-    refreshEditor();
-    return;
-  }
-  await saveBackground(file);
+  backgroundModalOpen = false;
+  backgroundConfirmation = { action: "none" };
+  refreshEditor();
+  openBackdropCropper({
+    file,
+    aspectRatio: canvasAspectRatio,
+    onConfirm: (blob) => saveBackground(blob),
+    onCancel: () => {},
+  });
 }
 
 async function saveBackground(file) {
@@ -1811,26 +2130,36 @@ async function removeBackdrop() {
   await commitEditorMutation({ ...editingEnvironment, background: undefined });
 }
 
+function closeBackgroundModal() {
+  backgroundModalOpen = false;
+  backgroundConfirmation = { action: "none" };
+  refreshEditor();
+}
+
 function bindBackgroundModal() {
   const modal = document.querySelector(".background-modal");
   if (!modal) return;
-  document.querySelector(".close-background-modal").addEventListener("click", () => {
-    backgroundModalOpen = false;
-    backgroundConfirmation = { action: "none" };
-    refreshEditor();
-  });
+  document.querySelector(".close-background-modal").addEventListener("click", closeBackgroundModal);
+  bindModalBackdropClose(".background-modal", closeBackgroundModal);
   const input = document.querySelector(".background-file");
   input.addEventListener("change", () => selectBackground(takeChosenFile(input)));
   const dropZone = document.querySelector(".background-drop-zone");
   dropZone.addEventListener("dragover", (event) => event.preventDefault());
-  dropZone.addEventListener("drop", (event) => {
+  dropZone.addEventListener("drop", async (event) => {
     event.preventDefault();
-    if (event.dataTransfer.files.length !== 1) {
+    const files = event.dataTransfer.files;
+    if (files.length > 1) {
       setBackgroundMessage("Drop one backdrop image at a time.");
       refreshEditor();
       return;
     }
-    selectBackground(event.dataTransfer.files[0]);
+    const file = files[0] || await fileFromDraggedWebImage(event.dataTransfer);
+    if (!file) {
+      setBackgroundMessage("That image could not be brought across from the other page. Right-click it, choose Copy image, and paste it here instead.");
+      refreshEditor();
+      return;
+    }
+    selectBackground(file);
   });
   document.querySelector(".remove-background")?.addEventListener("click", () => {
     if (editingEnvironment.background?.blob) {
@@ -1843,9 +2172,6 @@ function bindBackgroundModal() {
   document.querySelector(".cancel-background-confirmation")?.addEventListener("click", () => {
     backgroundConfirmation = { action: "none" };
     refreshEditor();
-  });
-  document.querySelector(".confirm-replace-background")?.addEventListener("click", () => {
-    saveBackground(backgroundConfirmation.file);
   });
   document.querySelector(".confirm-remove-background")?.addEventListener("click", removeBackdrop);
 }
@@ -2019,24 +2345,57 @@ async function saveEnvironment(environment, openAfterSave = false) {
 // never replaced by a render, so a listener bound inside renderEditor() would duplicate on
 // every render instead of being cleaned up with the rest of the editor markup.
 document.addEventListener("click", (event) => {
-  if (view === "editor" && spriteMenuOpenId && !event.target.closest(".sprite-menu-anchor")) closeSpriteMenu();
+  if (view === "editor" && spriteMenu && !event.target.closest(".sprite-context-menu")) closeSpriteMenu();
   if (view === "library" && environmentMenuOpenId && !event.target.closest(".environment-menu-anchor")) closeEnvironmentMenu();
 });
 document.addEventListener("focusin", (event) => {
-  if (view === "editor" && spriteMenuOpenId && !event.target.closest(".sprite-menu-anchor")) closeSpriteMenu();
+  if (view === "editor" && spriteMenu && !event.target.closest(".sprite-context-menu")) closeSpriteMenu();
 });
 document.addEventListener("keydown", (event) => {
+  if (view === "editor" && event.key !== "Escape") return editorKeyboardShortcut(event);
   if (event.key !== "Escape") return;
-  if (view === "editor" && spriteMenuOpenId) closeSpriteMenu(true);
+  if (view === "editor") {
+    if (spriteMenu) closeSpriteMenu();
+    else if (renameSpriteId) cancelSpriteRename();
+    else if (soundFlow) cancelSoundFlow();
+    else if (backgroundModalOpen) closeBackgroundModal();
+    else if (selectedSpriteId) deselectSprite();
+  }
   if (view !== "library") return;
   if (pendingDeleteId) cancelDeleteEnvironment();
   else if (environmentMenuOpenId) closeEnvironmentMenu(true);
 });
+document.addEventListener("paste", (event) => {
+  if (view === "editor" && editingEnvironment) pasteIntoEditor(event);
+});
 
 window.addEventListener("popstate", applyRoute);
 
+// The Park example is added the first time this device opens Sound Explorer, and only then: an
+// educator who deletes it later has chosen to, and can add it back from the library.
+const parkAddedKey = "sound-explorer.park-added";
+
+async function addParkOnFirstRun() {
+  let alreadyAdded = false;
+  try {
+    alreadyAdded = localStorage.getItem(parkAddedKey) === "true";
+  } catch (error) {
+    alreadyAdded = false;
+  }
+  if (alreadyAdded || saveState === "failed" || hasParkExample()) return;
+  try {
+    const park = await buildParkEnvironment();
+    await environmentStorage.save(park);
+    environments = [park, ...environments];
+    localStorage.setItem(parkAddedKey, "true");
+  } catch (error) {
+    // The library simply starts empty; the Park example stays available from its button.
+  }
+}
+
 async function start() {
   await loadEnvironments();
+  await addParkOnFirstRun();
   applyRoute();
 }
 

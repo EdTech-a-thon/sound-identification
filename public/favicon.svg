@@ -2,5 +2,5 @@
   <title>Sound Explorer</title>
   <rect width="32" height="32" rx="7" fill="#25424a"/>
   <path fill="#fff8e5" d="M5 13h5l6-5a1 1 0 0 1 1.6.8v14.4A1 1 0 0 1 16 24l-6-5H5a1 1 0 0 1-1-1v-4a1 1 0 0 1 1-1Z"/>
-  <path fill="none" stroke="#ef8d67" stroke-linecap="round" stroke-width="2.5" d="M21 12.2a5.2 5.2 0 0 1 0 7.6M24.5 8.5a10.2 10.2 0 0 1 0 15"/>
+  <path fill="none" stroke="#83bd6d" stroke-linecap="round" stroke-width="2.5" d="M21 12.2a5.2 5.2 0 0 1 0 7.6M24.5 8.5a10.2 10.2 0 0 1 0 15"/>
 </svg>
