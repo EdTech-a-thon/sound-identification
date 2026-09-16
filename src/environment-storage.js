@@ -43,4 +43,7 @@ function useEnvironmentStore(mode, action) {
 export const environmentStorage = {
   list: () => useEnvironmentStore("readonly", (store) => store.getAll()),
   save: (environment) => useEnvironmentStore("readwrite", (store) => store.put(environment)),
+  // A whole environment — its name, its backdrop, and every sprite image and sound — is one
+  // record, so removing that record removes the environment and all of its media in one go.
+  delete: (id) => useEnvironmentStore("readwrite", (store) => store.delete(id)),
 };

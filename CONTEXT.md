@@ -2,7 +2,11 @@
 
 ## Environment
 
-A complete sound-matching activity containing a name, background image, sprites, and one optional sound for each sprite. An environment becomes playable when it has a name and at least one sprite with a sound.
+A complete sound-matching activity containing a name, a chosen backdrop, sprites, and one optional sound for each sprite. An environment becomes playable when it has a name, a backdrop, and at least one sprite with a sound.
+
+## Backdrop
+
+The base of an environment's activity area. A chosen backdrop is either an uploaded image or an explicit blank white backdrop. An environment with no backdrop is an unchosen draft, and sprites cannot be added until a backdrop is chosen.
 
 ## Starter environment
 
@@ -14,7 +18,7 @@ A user-created environment that is saved on the current device but does not yet 
 
 ## Playable environment
 
-An environment that has a name, a background, and at least one sprite with an attached sound.
+An environment that has a name, a chosen backdrop, and at least one sprite with an attached sound.
 
 ## Sprite
 

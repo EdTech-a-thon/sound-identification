@@ -13,3 +13,8 @@ dist
 
 # Finder (MacOS) folder config
 .DS_Store
+# Local scratch notes and test output
+.scratch
+test-results
+playwright-report
+.claude/settings.local.json
