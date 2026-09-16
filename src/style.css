@@ -103,7 +103,6 @@ body[data-view="activity"] { overflow:hidden; }
 .library-actions { display:flex; flex-wrap:wrap; gap:8px; }
 .library-empty { margin:0 0 18px; padding:18px; border:1px dashed #b5c9c0; border-radius:14px; color:var(--muted); font-size:14px; text-align:center; }
 .create-environment,
-.add-park-example,
 .import-environment {
   display:inline-flex;
   align-items:center;
@@ -117,9 +116,7 @@ body[data-view="activity"] { overflow:hidden; }
   font:700 14px "DM Sans",sans-serif;
 }
 .create-environment:hover { background:var(--green-dark); }
-.add-park-example,
 .import-environment { color:var(--green-dark); border-color:#b5c9c0; background:#fff; }
-.add-park-example:hover,
 .import-environment:hover { background:var(--green-soft); }
 .environment-grid { display:grid; grid-template-columns:repeat(auto-fill,minmax(300px,1fr)); gap:16px; }
 .environment-card {
@@ -441,6 +438,10 @@ body[data-view="activity"] { overflow:hidden; }
 .editor-sprite .ring { border-width:3px; opacity:.45; pointer-events:none; }
 .editor-sprite:hover .ring { opacity:.85; }
 .editor-sprite.selected .ring { opacity:0; }
+/* A sprite without a sound wears a muted-speaker badge, selected or not, so the gap is visible at a glance. */
+.editor-sprite .sprite-no-sound { position:absolute; top:-8px; right:-8px; z-index:2; display:flex; align-items:center; justify-content:center; width:24px; height:24px; border:2px solid #fff; border-radius:50%; color:#fff; background:var(--danger); box-shadow:0 2px 6px #2e474c40; pointer-events:none; }
+.editor-sprite .sprite-no-sound .icon { width:14px; height:14px; stroke-width:2.2; }
+.editor-sprite.selected .sprite-no-sound { top:4px; right:4px; }
 .sprite-transform-handles { position:absolute; pointer-events:none; }
 .sprite-transform-handles:not(.selected) { display:none; }
 .resize-handle { position:absolute; width:16px; height:16px; border:2px solid var(--select); border-radius:50%; background:#fff; pointer-events:auto; touch-action:none; }
@@ -493,6 +494,7 @@ body[data-view="activity"] { overflow:hidden; }
 .sprite-card .file-picker:hover { background:var(--green-tint); }
 .sprite-card button:focus-visible { outline:2px solid var(--select); outline-offset:-2px; }
 .sprite-card .rename-sprite { max-width:180px; padding:0 8px 0 10px; font-weight:700; }
+.sprite-card .sprite-card-name { min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
 .sprite-card .rename-sprite .icon { width:14px; height:14px; color:#7d918c; }
 .sprite-card .sprite-card-sound { display:inline-flex; align-items:center; gap:2px; padding-left:2px; border-left:1px solid var(--line); }
 .sprite-card .preview-sprite-sound { color:#fff; background:var(--green); border-radius:50%; min-width:34px; min-height:34px; margin:3px; }

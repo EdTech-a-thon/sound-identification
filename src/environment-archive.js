@@ -84,20 +84,20 @@ function isNumber(value) {
 }
 
 function mediaFrom(files, media, kind) {
-  if (!media || typeof media.file !== "string") throw new Error("This file is not a Sound Explorer environment.");
+  if (!media || typeof media.file !== "string") throw new Error("This file is not an Everyday Sound Lab environment.");
   const bytes = files.get(media.file);
   if (!bytes) throw new Error(`This environment is missing a ${kind} file (${media.file}).`);
   return new Blob([bytes], { type: typeof media.type === "string" ? media.type : "" });
 }
 
 // Turns a shared .zip file into an environment ready to be saved on this device. Anything that
-// does not look like an environment made by Sound Explorer is rejected with a plain reason.
+// does not look like an environment made by Everyday Sound Lab is rejected with a plain reason.
 export async function unpackEnvironment(file) {
   let files;
   try {
     files = await readZip(new Uint8Array(await file.arrayBuffer()));
   } catch (error) {
-    throw new Error("This file is not a Sound Explorer environment.");
+    throw new Error("This file is not an Everyday Sound Lab environment.");
   }
 
   const manifestBytes = files.get(manifestName);
@@ -105,10 +105,10 @@ export async function unpackEnvironment(file) {
   try {
     manifest = JSON.parse(new TextDecoder().decode(manifestBytes));
   } catch (error) {
-    throw new Error("This file is not a Sound Explorer environment.");
+    throw new Error("This file is not an Everyday Sound Lab environment.");
   }
   if (manifest?.format !== archiveFormat || typeof manifest.name !== "string" || !Array.isArray(manifest.sprites)) {
-    throw new Error("This file is not a Sound Explorer environment.");
+    throw new Error("This file is not an Everyday Sound Lab environment.");
   }
 
   let background;
@@ -117,7 +117,7 @@ export async function unpackEnvironment(file) {
 
   const sprites = manifest.sprites.map((sprite) => {
     if (!sprite || typeof sprite.name !== "string" || !isNumber(sprite.xPercent) || !isNumber(sprite.yPercent) || !isNumber(sprite.sizePercent)) {
-      throw new Error("This file is not a Sound Explorer environment.");
+      throw new Error("This file is not an Everyday Sound Lab environment.");
     }
     return {
       id: crypto.randomUUID(),

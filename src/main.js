@@ -76,7 +76,7 @@ const renderedEditorRegions = new Map();
 const spriteImageBlobs = new WeakMap();
 let renderedBackdrop = { kind: "pending", blob: undefined };
 const rotationSnapDegrees = 45;
-const projectName = "Sound Explorer";
+const projectName = "Everyday Sound Lab";
 // Every activity area — editor, preview, and play — is the same 16:9 frame, so a sprite placed
 // in the editor sits in exactly the same spot when learners play.
 const canvasAspectRatio = 16 / 9;
@@ -91,6 +91,7 @@ const iconShapes = {
   rename: `<path d="M4 20h4.5L19 9.5a2.1 2.1 0 0 0-3-3L5.5 17Z"/><path d="m13.5 9 3 3"/>`,
   image: `<rect x="3" y="5" width="18" height="14" rx="2.5"/><circle cx="8.6" cy="10" r="1.5"/><path d="m3.5 16.8 4.9-4.3 3.9 3.4 2.9-2.4 5.3 4.2"/>`,
   sound: `<path d="M4 10h3.5l4.5-4v12l-4.5-4H4Z"/><path d="M15.5 9.2a4 4 0 0 1 0 5.6M18.3 6.4a8 8 0 0 1 0 11.2"/>`,
+  soundOff: `<path d="M4 10h3.5l4.5-4v12l-4.5-4H4Z"/><path d="m15.5 9.5 5 5M20.5 9.5l-5 5"/>`,
   play: `<path class="solid" d="m8.5 5.4 10.4 6.6-10.4 6.6z"/>`,
   pause: `<rect class="solid" x="6.5" y="5" width="4" height="14" rx="1"/><rect class="solid" x="13.5" y="5" width="4" height="14" rx="1"/>`,
   stop: `<rect class="solid" x="6" y="6" width="12" height="12" rx="2"/>`,
@@ -426,7 +427,15 @@ function spriteFootprintStyle(sprite, layer) {
 
 function spriteMarkup(sprite, layer) {
   const selected = sprite.id === selectedSpriteId;
-  return `<button class="editor-sprite ${selected ? "selected" : ""}" data-sprite-id="${sprite.id}" aria-label="${escapeHtml(sprite.name)}" aria-pressed="${selected}" style="${spritePositionStyle(sprite, layer)};transform:${spriteRotationTransform(sprite)}"><img src="${blobUrl(sprite.image.blob)}" alt="${escapeHtml(sprite.name)}" draggable="false"><span class="ring"></span></button>${spriteTransformHandlesMarkup(sprite, layer, selected)}${spriteCardAnchorMarkup(sprite, layer, selected)}`;
+  return `<button class="editor-sprite ${selected ? "selected" : ""}" data-sprite-id="${sprite.id}" aria-label="${escapeHtml(sprite.name)}" aria-pressed="${selected}" style="${spritePositionStyle(sprite, layer)};transform:${spriteRotationTransform(sprite)}"><img src="${blobUrl(sprite.image.blob)}" alt="${escapeHtml(sprite.name)}" draggable="false"><span class="ring"></span>${spriteNoSoundBadgeMarkup(sprite)}</button>${spriteTransformHandlesMarkup(sprite, layer, selected)}${spriteCardAnchorMarkup(sprite, layer, selected)}`;
+}
+
+// A sprite with no sound wears a small muted-speaker badge whether or not it is selected, so an
+// educator can see at a glance which sprites still need one. The badge turns back against the
+// sprite's rotation so it always reads upright.
+function spriteNoSoundBadgeMarkup(sprite) {
+  if (spriteHasSound(sprite)) return "";
+  return `<span class="sprite-no-sound" title="No sound yet" style="transform:rotate(${-(sprite.rotationDegrees || 0)}deg)">${icon("soundOff")}</span>`;
 }
 
 function spriteTransformHandlesMarkup(sprite, layer, selected) {
@@ -463,7 +472,7 @@ function spriteCardBodyMarkup(sprite) {
         <button type="button" class="open-sprite-sound" title="Open sound">${escapeHtml(sprite.sound.label)}</button>
       </span>`
     : `<button type="button" class="open-sprite-sound add-sound" title="Add sound">${icon("sound")}<span>Add sound</span></button>`;
-  return `<button type="button" class="rename-sprite" title="Rename" aria-label="Rename ${escapeHtml(sprite.name)}">${escapeHtml(sprite.name)}${icon("rename")}</button>
+  return `<button type="button" class="rename-sprite" title="Rename ${escapeHtml(sprite.name)}" aria-label="Rename ${escapeHtml(sprite.name)}"><span class="sprite-card-name">${escapeHtml(sprite.name)}</span>${icon("rename")}</button>
     ${sound}
     <span class="sprite-card-divider"></span>
     <label class="replace-sprite-image file-picker" title="Replace image">${icon("image")}<input class="replace-sprite-image-file" aria-label="Replace image" type="file" accept="${acceptedImageTypes.join(",")}"></label>
@@ -774,8 +783,7 @@ function hasParkExample() {
 }
 
 function renderLibrary() {
-  const parkButton = hasParkExample() ? "" : `<button class="add-park-example" type="button">Add the Park example</button>`;
-  const emptyNote = environments.length ? "" : `<p class="library-empty">Nothing here yet. Create an environment, or add the Park example to see how one fits together.</p>`;
+  const emptyNote = environments.length ? "" : `<p class="library-empty">Nothing here yet. Create an environment to get started.</p>`;
   app.innerHTML = `<main class="library">
     <header class="app-topbar library-topbar">
       ${brandMarkup()}
@@ -789,7 +797,6 @@ function renderLibrary() {
           <p>Every environment stays on this device. Open one to edit it, or play it with your class.</p>
         </div>
         <div class="library-actions">
-          ${parkButton}
           <button class="import-environment" type="button">${icon("import")}<span>Import environment</span></button>
           <input class="import-environment-file" type="file" accept=".zip,application/zip" hidden>
           <button class="create-environment" type="button">${icon("sprite")}<span>Create environment</span></button>
@@ -805,7 +812,6 @@ function renderLibrary() {
   </main>`;
   document.querySelector(".editor-home").addEventListener("click", () => navigate({ name: "library" }));
   document.querySelector(".create-environment").addEventListener("click", createEnvironment);
-  document.querySelector(".add-park-example")?.addEventListener("click", addParkExample);
   const importInput = document.querySelector(".import-environment-file");
   document.querySelector(".import-environment").addEventListener("click", () => importInput.click());
   importInput.addEventListener("change", () => {
@@ -877,27 +883,6 @@ function closeEnvironmentMenu(returnFocus = false) {
   environmentMenuOpenId = undefined;
   showEnvironmentMenu();
   if (returnFocus) menuTrigger(id)?.focus();
-}
-
-// The Park example is drawn and saved on first use; if it is ever deleted it can be added back.
-async function addParkExample() {
-  if (hasParkExample()) return;
-  let park;
-  try {
-    park = await buildParkEnvironment();
-  } catch (error) {
-    saveMessage = "The Park example could not be prepared. Try again in a moment.";
-    render();
-    return;
-  }
-  const stored = await runLibraryWrite(
-    () => environmentStorage.save(park),
-    "The Park example could not be saved on this device. Check browser storage and try again.",
-  );
-  if (!stored) return;
-  environments = [park, ...environments];
-  try { localStorage.setItem(parkAddedKey, "true"); } catch (error) { /* first-run marker only */ }
-  render();
 }
 
 function askToDeleteEnvironment(id) {
@@ -2312,7 +2297,7 @@ async function importEnvironmentFile(file) {
   try {
     environment = await unpackEnvironment(file);
   } catch (error) {
-    saveMessage = error.message || "This file is not a Sound Explorer environment.";
+    saveMessage = error.message || "This file is not an Everyday Sound Lab environment.";
     render();
     return;
   }
@@ -2445,8 +2430,9 @@ document.addEventListener("paste", (event) => {
 
 window.addEventListener("popstate", applyRoute);
 
-// The Park example is added the first time this device opens Sound Explorer, and only then: an
-// educator who deletes it later has chosen to, and can add it back from the library.
+// The Park example ships with Everyday Sound Lab: it is drawn and saved the first time this device
+// opens the app, and only then, so an educator who deletes it later has chosen to. If the first
+// attempt fails (for example, the sound files could not be fetched) it is tried again next visit.
 const parkAddedKey = "sound-explorer.park-added";
 
 async function addParkOnFirstRun() {
@@ -2463,7 +2449,7 @@ async function addParkOnFirstRun() {
     environments = [park, ...environments];
     localStorage.setItem(parkAddedKey, "true");
   } catch (error) {
-    // The library simply starts empty; the Park example stays available from its button.
+    // The library simply starts empty this time, and the Park example is tried again next visit.
   }
 }
 
