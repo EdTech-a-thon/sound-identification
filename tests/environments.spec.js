@@ -264,14 +264,13 @@ test("an address for an environment that is not there falls back to the library"
   await expect(page).toHaveURL("/");
 });
 
-test("the Park example is added on first run, is editable, and can be added back after deletion", async ({ page }) => {
+test("the Park example ships with the app, is editable, and stays deleted once deleted", async ({ page }) => {
   await page.goto("/");
 
   await expect(page.getByRole("heading", { name: "Your environments" })).toBeVisible();
   await expect(page.getByRole("heading", { name: "A day at the park" })).toBeVisible();
   await expect(page.getByText("Ready to play", { exact: true })).toBeVisible();
   await expect(page.getByText("4 sprites · 4 sounds", { exact: true })).toBeVisible();
-  await expect(page.getByRole("button", { name: "Add the Park example" })).toHaveCount(0);
   await expect(page.getByRole("heading", { name: "Kitchen" })).toHaveCount(0);
 
   // Park is an ordinary environment: it opens in the editor with its sprites in place.
@@ -279,7 +278,7 @@ test("the Park example is added on first run, is editable, and can be added back
   await expect(page.getByRole("button", { name: "Slide", exact: true })).toBeVisible();
   await expect(page.getByRole("button", { name: "Bird", exact: true })).toBeVisible();
 
-  // Deleting it is allowed, it stays deleted after a reload, and the library offers it back.
+  // Deleting it is allowed and it stays deleted after a reload; there is no button to add it back.
   await page.getByRole("button", { name: "Home" }).click();
   await openCardMenu(page, "A day at the park");
   await page.getByRole("menuitem", { name: "Delete" }).click();
@@ -288,8 +287,7 @@ test("the Park example is added on first run, is editable, and can be added back
   await page.reload();
   await expect(page.getByRole("heading", { name: "Your environments" })).toBeVisible();
   await expect(page.getByRole("heading", { name: "A day at the park" })).toHaveCount(0);
-  await page.getByRole("button", { name: "Add the Park example" }).click();
-  await expect(page.getByRole("heading", { name: "A day at the park" })).toBeVisible();
+  await expect(page.getByRole("button", { name: "Add the Park example" })).toHaveCount(0);
 });
 
 test("educators can create, name, and reopen a saved draft", async ({ page }) => {
@@ -324,7 +322,7 @@ test("the editor toolbar leads with the project mark, arrow undo and redo, and n
   await expect(home).toBeVisible();
   await expect(home).toHaveAttribute("title", "Home");
   await expect(home.locator("svg.icon-artwork")).toBeVisible();
-  await expect(toolbar.getByText("Sound Explorer", { exact: true })).toBeVisible();
+  await expect(toolbar.getByText("Everyday Sound Lab", { exact: true })).toBeVisible();
   // Browser Back now does exactly what the old in-app Back button did, so there is only one.
   await expect(toolbar.getByRole("button", { name: "Back", exact: true })).toHaveCount(0);
 

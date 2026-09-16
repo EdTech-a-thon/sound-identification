@@ -1,4 +1,4 @@
-# Sound Explorer glossary
+# Everyday Sound Lab glossary
 
 ## Environment
 
@@ -10,7 +10,7 @@ The base of an environment's activity area. A chosen backdrop is either an uploa
 
 ## Starter environment
 
-A protected example environment supplied with Sound Explorer. A starter environment can be played, but not changed, duplicated, or deleted.
+A protected example environment supplied with Everyday Sound Lab. A starter environment can be played, but not changed, duplicated, or deleted.
 
 ## Draft environment
 
