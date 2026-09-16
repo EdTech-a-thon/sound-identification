@@ -163,10 +163,11 @@ body[data-view="activity"] { overflow:hidden; }
 .environment-card-actions .environment-menu-trigger { width:var(--tap); height:var(--tap); padding:0; color:#49676c; background:var(--green-tint); }
 .environment-card-actions .environment-menu-trigger:hover,
 .environment-card-actions .environment-menu-trigger[aria-expanded="true"] { color:var(--ink); background:#dde8e2; }
+/* The menu opens upward over its own card, so it never adds scroll below the last card. */
 .environment-menu {
   position:absolute;
   z-index:15;
-  top:calc(100% + 6px);
+  bottom:calc(100% + 6px);
   right:0;
   min-width:180px;
   margin:0;

@@ -21,8 +21,12 @@ const validAudio = (name = "chirp.mp3", mimeType = "audio/mpeg") => ({
 });
 
 async function openLibrary(page) {
-  if (await page.getByRole("heading", { name: "Your environments" }).isVisible()) return;
-  await page.getByRole("button", { name: "Environments" }).click();
+  const heading = page.getByRole("heading", { name: "Your environments" });
+  const environmentsButton = page.getByRole("button", { name: "Environments" });
+  await expect(heading.or(environmentsButton)).toBeVisible();
+  if (await heading.isVisible()) return;
+  await environmentsButton.click();
+  await expect(heading).toBeVisible();
 }
 
 async function chooseBlankBackdrop(page) {
@@ -96,21 +100,47 @@ async function openCardMenu(page, name) {
   await libraryCard(page, name).getByRole("button", { name: `More options for ${name}` }).click();
 }
 
+// Every uploaded backdrop passes through the cropper; confirming it is what saves the backdrop.
+async function confirmBackdrop(page) {
+  await page.getByRole("button", { name: "Use as backdrop" }).click();
+  await expect(page.locator(".cropper-modal")).toHaveCount(0);
+}
+
+async function uploadBackdrop(page, file) {
+  await page.getByLabel("Choose backdrop image").setInputFiles(file);
+  await confirmBackdrop(page);
+}
+
+function spriteButton(page, name) {
+  return page.getByRole("button", { name, exact: true });
+}
+
+// Selecting a sprite shows its card; the card's sound control opens the sound window.
+async function openSpriteSound(page, name) {
+  await spriteButton(page, name).click();
+  await page.locator(".sprite-card-anchor.selected .open-sprite-sound").click();
+  await expect(page.locator(".sound-modal")).toBeVisible();
+}
+
+function soundModal(page) {
+  return page.locator(".sound-modal");
+}
+
 // Builds a two-sprite environment worth copying: an uploaded backdrop, one sprite with a sound
 // and a rotation, and a second sprite dropped elsewhere so layer order is observable.
 async function buildRichEnvironment(page, name) {
   await page.getByRole("button", { name: "Create environment" }).click();
   await page.getByLabel("Environment name").fill(name);
   await page.getByLabel("Environment name").press("Tab");
-  await page.getByLabel("Choose backdrop image").setInputFiles(validImage("meadow_backdrop.png"));
+  await uploadBackdrop(page, validImage("meadow_backdrop.png"));
   await expect(page.getByRole("img", { name: "Environment backdrop" })).toBeVisible();
 
   await page.getByLabel("Add sprite image").setInputFiles(validImage("singing_lark.png"));
   await expect(page.getByRole("button", { name: "Singing Lark", exact: true })).toBeVisible();
-  await page.getByRole("button", { name: "Sprite options for Singing Lark" }).click();
+  await openSpriteSound(page, "Singing Lark");
   await page.getByLabel("Add sound").setInputFiles(validAudio("lark_song.mp3"));
   await page.getByLabel("Sound label").fill("Lark singing");
-  await page.getByRole("button", { name: "Add sound" }).click();
+  await soundModal(page).getByRole("button", { name: "Add sound" }).click();
   await expect(page.getByRole("status")).toHaveText("Saved on this device");
 
   await page.locator(".activity-canvas").evaluate((canvas, base64) => {
@@ -159,17 +189,13 @@ async function spriteGeometry(page, name, containerSelector = ".activity-canvas"
   };
 }
 
-test("every surface has its own address, starter scenes included", async ({ page }) => {
+test("every surface has its own address, the Park example included", async ({ page }) => {
   await page.goto("/");
   await expect(page).toHaveURL("/");
 
-  await page.getByRole("button", { name: "Play Park" }).click();
+  await page.getByRole("button", { name: "Play A day at the park" }).click();
   await expect(page).toHaveURL("/play/park");
   await expect(page.getByRole("heading", { name: "A day at the park" })).toBeVisible();
-
-  await page.getByRole("button", { name: "Kitchen", exact: true }).click();
-  await expect(page).toHaveURL("/play/kitchen");
-  await expect(page.getByRole("heading", { name: "Sounds in the kitchen" })).toBeVisible();
 
   await page.goto("/play/park");
   await expect(page.getByRole("heading", { name: "A day at the park" })).toBeVisible();
@@ -206,7 +232,7 @@ test("browser Back and Forward move between the library, an editor, and play", a
 
   await page.getByRole("button", { name: "Home" }).click();
   await expect(page).toHaveURL("/");
-  await page.getByRole("button", { name: "Play Park" }).click();
+  await page.getByRole("button", { name: "Play A day at the park" }).click();
   await expect(page.getByRole("heading", { name: "A day at the park" })).toBeVisible();
 
   await page.goBack();
@@ -238,18 +264,32 @@ test("an address for an environment that is not there falls back to the library"
   await expect(page).toHaveURL("/");
 });
 
-test("educators can open the protected starter environments in the library", async ({ page }) => {
+test("the Park example is added on first run, is editable, and can be added back after deletion", async ({ page }) => {
   await page.goto("/");
 
   await expect(page.getByRole("heading", { name: "Your environments" })).toBeVisible();
-  await expect(page.getByRole("heading", { name: "Park" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "A day at the park" })).toBeVisible();
   await expect(page.getByText("Ready to play", { exact: true })).toBeVisible();
-  await expect(page.getByRole("heading", { name: "Kitchen" })).toBeVisible();
-  await expect(page.getByText("Coming soon", { exact: true })).toBeVisible();
-  await expect(page.getByRole("button", { name: "Play Kitchen" })).toBeDisabled();
   await expect(page.getByText("4 sprites · 4 sounds", { exact: true })).toBeVisible();
-  await expect(page.getByText("3 sprites · 0 sounds", { exact: true })).toBeVisible();
-  await expect(page.getByText("Starter environment", { exact: true })).toHaveCount(2);
+  await expect(page.getByRole("button", { name: "Add the Park example" })).toHaveCount(0);
+  await expect(page.getByRole("heading", { name: "Kitchen" })).toHaveCount(0);
+
+  // Park is an ordinary environment: it opens in the editor with its sprites in place.
+  await libraryCard(page, "A day at the park").getByRole("button", { name: "Edit" }).click();
+  await expect(page.getByRole("button", { name: "Slide", exact: true })).toBeVisible();
+  await expect(page.getByRole("button", { name: "Bird", exact: true })).toBeVisible();
+
+  // Deleting it is allowed, it stays deleted after a reload, and the library offers it back.
+  await page.getByRole("button", { name: "Home" }).click();
+  await openCardMenu(page, "A day at the park");
+  await page.getByRole("menuitem", { name: "Delete" }).click();
+  await page.getByRole("button", { name: "Delete environment" }).click();
+  await expect(page.getByRole("heading", { name: "A day at the park" })).toHaveCount(0);
+  await page.reload();
+  await expect(page.getByRole("heading", { name: "Your environments" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "A day at the park" })).toHaveCount(0);
+  await page.getByRole("button", { name: "Add the Park example" }).click();
+  await expect(page.getByRole("heading", { name: "A day at the park" })).toBeVisible();
 });
 
 test("educators can create, name, and reopen a saved draft", async ({ page }) => {
@@ -269,7 +309,7 @@ test("educators can create, name, and reopen a saved draft", async ({ page }) =>
   await page.reload();
   await openLibrary(page);
   await expect(page.getByRole("heading", { name: "Forest sounds" })).toBeVisible();
-  await page.getByRole("button", { name: "Edit" }).click();
+  await libraryCard(page, "Forest sounds").getByRole("button", { name: "Edit" }).click();
   await expect(page.getByLabel("Environment name")).toHaveValue("Forest sounds");
 });
 
@@ -330,26 +370,32 @@ test("the save state reads as an icon while keeping its wording for assistive te
   await expect(page.getByRole("status").locator("svg")).toBeVisible();
 });
 
-test("Change backdrop and Add sprite live in the toolbar, and sprites stay gated until a backdrop exists", async ({ page }) => {
+test("Change backdrop and Add sprite live in the control panel under the activity area, and sprites stay gated until a backdrop exists", async ({ page }) => {
   await page.goto("/");
   await page.getByRole("button", { name: "Create environment" }).click();
 
-  const toolbar = page.getByRole("toolbar", { name: "Editor toolbar" });
-  await expect(toolbar.getByRole("button", { name: "Add sprite after choosing a backdrop" })).toBeDisabled();
-  await expect(toolbar.getByRole("button", { name: "Change backdrop" })).toHaveCount(0);
+  const controls = page.getByRole("group", { name: "Backdrop and sprites" });
+  await expect(controls.getByRole("button", { name: "Add sprite after choosing a backdrop" })).toBeDisabled();
+  await expect(controls.getByRole("button", { name: "Change backdrop" })).toHaveCount(0);
   await expect(page.getByLabel("Add sprite image")).toHaveCount(0);
+  // The panel also carries the guidance that used to float over the activity area.
+  await expect(controls.getByText(/This draft needs a backdrop/)).toBeVisible();
 
   await chooseBlankBackdrop(page);
-  await expect(toolbar.getByRole("button", { name: "Change backdrop" })).toBeVisible();
+  await expect(controls.getByRole("button", { name: "Change backdrop" })).toBeVisible();
+  // The panel sits below the activity area, not above it.
+  const canvas = await page.locator(".activity-canvas").boundingBox();
+  const panel = await controls.boundingBox();
+  expect(panel.y).toBeGreaterThanOrEqual(canvas.y + canvas.height - 1);
 
-  const spritePicker = toolbar.getByLabel("Add sprite image");
+  const spritePicker = controls.getByLabel("Add sprite image");
   await expect(spritePicker).toBeAttached();
   await spritePicker.focus();
   await expect(spritePicker).toBeFocused();
   await spritePicker.setInputFiles(validImage("toolbar_tent.png"));
   await expect(page.getByRole("button", { name: "Toolbar Tent", exact: true })).toBeVisible();
 
-  await toolbar.getByRole("button", { name: "Change backdrop" }).click();
+  await controls.getByRole("button", { name: "Change backdrop" }).click();
   await expect(page.getByRole("dialog", { name: "Change backdrop" })).toBeVisible();
 });
 
@@ -394,7 +440,7 @@ test("the initial canvas offers direct backdrop picking and persists an uploaded
   await expect(page.getByLabel("Add sprite image")).toHaveCount(0);
   await expect(page.getByText(/This draft needs a backdrop/i)).toBeVisible();
 
-  await page.getByLabel("Choose backdrop image").setInputFiles(validImage("forest.png"));
+  await uploadBackdrop(page, validImage("forest.png"));
   await expect(page.getByText("Backdrop added.")).toBeVisible();
   await expect(page.getByRole("img", { name: "Environment backdrop" })).toBeVisible();
   await expect(page.getByRole("button", { name: "Change backdrop" })).toBeVisible();
@@ -423,6 +469,9 @@ test("direct backdrop drop works and uploaded backdrop replacement or removal st
     ], "dropped.webp", { type: "image/webp" }));
     canvas.dispatchEvent(new DragEvent("drop", { bubbles: true, dataTransfer }));
   });
+  // A dropped picture opens the cropper first; the backdrop is only saved once it is confirmed.
+  await expect(page.getByRole("dialog", { name: "Position your backdrop" })).toBeVisible();
+  await confirmBackdrop(page);
   await expect(page.getByText("Backdrop added.")).toBeVisible();
   await page.getByLabel("Add sprite image").setInputFiles(validImage("kept_sprite.png"));
   await expect(page.getByRole("button", { name: "Kept Sprite", exact: true })).toBeVisible();
@@ -431,13 +480,15 @@ test("direct backdrop drop works and uploaded backdrop replacement or removal st
   await expect(page.getByRole("dialog", { name: "Change backdrop" })).toBeVisible();
   const picker = page.getByLabel("Choose backdrop image");
   await picker.setInputFiles(validImage("replacement.jpg", "image/jpeg"));
-  await expect(page.getByRole("heading", { name: "Replace this backdrop?" })).toBeVisible();
+  await expect(page.getByRole("dialog", { name: "Position your backdrop" })).toBeVisible();
   await page.getByRole("button", { name: "Cancel" }).click();
-  await expect(page.getByRole("heading", { name: "Replace this backdrop?" })).toHaveCount(0);
+  await expect(page.getByRole("dialog", { name: "Position your backdrop" })).toHaveCount(0);
+  await expect(page.getByText("Backdrop replaced.")).toHaveCount(0);
 
-  await picker.setInputFiles(validImage("replacement.jpg", "image/jpeg"));
-  await page.getByRole("button", { name: "Replace backdrop" }).click();
+  await page.getByRole("button", { name: "Change backdrop" }).click();
+  await uploadBackdrop(page, validImage("replacement.jpg", "image/jpeg"));
   await expect(page.getByText("Backdrop replaced.")).toBeVisible();
+  await page.getByRole("button", { name: "Change backdrop" }).click();
   await page.getByRole("button", { name: "Remove backdrop" }).click();
   await expect(page.getByRole("heading", { name: "Remove this backdrop?" })).toBeVisible();
   await page.getByRole("button", { name: "Remove backdrop" }).last().click();
@@ -537,7 +588,7 @@ test("a selected sprite shows resize handles, and dragging a corner handle resiz
   await page.getByRole("button", { name: "Home" }).click();
   await page.reload();
   await openLibrary(page);
-  await page.getByRole("button", { name: "Edit" }).click();
+  await page.getByRole("button", { name: "Edit" }).last().click();
   await expect.poll(() => spriteGeometry(page, "Puzzle Piece")).toMatchObject({
     widthRatio: expect.closeTo(after.widthRatio, 2),
   });
@@ -629,7 +680,7 @@ test("rotation snaps to 45-degree steps, Shift rotates freely, and rotation pers
   await page.getByRole("button", { name: "Home" }).click();
   await page.reload();
   await openLibrary(page);
-  await page.getByRole("button", { name: "Edit" }).click();
+  await page.getByRole("button", { name: "Edit" }).last().click();
   await expect(page.getByRole("button", { name: "Weathervane", exact: true })).toBeVisible();
   expect(await spriteRotation(page, "Weathervane")).toBeCloseTo(90, 0);
 
@@ -637,7 +688,7 @@ test("rotation snaps to 45-degree steps, Shift rotates freely, and rotation pers
   expect(await spriteRotation(page, "Weathervane")).toBeCloseTo(90, 0);
 });
 
-test("the sprite menu anchor follows the sprite's rotation while its control stays upright", async ({ page }) => {
+test("the sprite card sits upright under the sprite's footprint however the sprite is rotated", async ({ page }) => {
   await page.goto("/");
   await page.getByRole("button", { name: "Create environment" }).click();
   await chooseBlankBackdrop(page);
@@ -646,29 +697,29 @@ test("the sprite menu anchor follows the sprite's rotation while its control sta
   await expect(sprite).toBeVisible();
   await expect(page.getByRole("status")).toHaveText("Saved on this device");
 
-  const trigger = page.getByRole("button", { name: "Sprite options for Compass Rose" });
-  const offsetFromSpriteCenter = async () => {
+  const card = page.getByRole("toolbar", { name: "Sprite options for Compass Rose" });
+  await expect(card).toBeVisible();
+  await expect(card.getByRole("button", { name: "Rename Compass Rose" })).toBeVisible();
+  await expect(card.getByRole("button", { name: "Add sound" })).toBeVisible();
+  await expect(card.getByLabel("Replace image")).toBeAttached();
+  await expect(card.getByRole("button", { name: "Duplicate" })).toBeVisible();
+  await expect(card.getByRole("button", { name: "Delete" })).toBeVisible();
+
+  const cardPlacement = async () => {
     const spriteBox = await sprite.boundingBox();
-    const triggerBox = await trigger.boundingBox();
+    const cardBox = await card.boundingBox();
     return {
-      x: triggerBox.x + triggerBox.width / 2 - (spriteBox.x + spriteBox.width / 2),
-      y: triggerBox.y + triggerBox.height / 2 - (spriteBox.y + spriteBox.height / 2),
+      belowSprite: cardBox.y >= spriteBox.y + spriteBox.height,
+      centeredOnSprite: Math.abs(cardBox.x + cardBox.width / 2 - (spriteBox.x + spriteBox.width / 2)) < 2,
+      rotation: await card.evaluate((element) => {
+        const transform = getComputedStyle(element).transform;
+        if (transform === "none") return 0;
+        const matrix = new DOMMatrix(transform);
+        return Math.round(Math.atan2(matrix.b, matrix.a) * (180 / Math.PI));
+      }),
     };
   };
-  // The angle the ⋮ control is actually drawn at on screen: its own transform combined with the
-  // rotated anchor it sits inside. Zero means upright, never mirrored or upside down.
-  const onScreenRotation = () => trigger.evaluate((element) => {
-    const matrixOf = (node) => {
-      const transform = getComputedStyle(node).transform;
-      return transform === "none" ? new DOMMatrix() : new DOMMatrix(transform);
-    };
-    const combined = matrixOf(element.parentElement).multiply(matrixOf(element));
-    return Math.round(Math.atan2(combined.b, combined.a) * (180 / Math.PI));
-  });
-
-  const unrotated = await offsetFromSpriteCenter();
-  expect(unrotated.x).toBeGreaterThan(Math.abs(unrotated.y));
-  expect(await onScreenRotation()).toBe(0);
+  expect(await cardPlacement()).toEqual({ belowSprite: true, centeredOnSprite: true, rotation: 0 });
 
   const spriteBox = await sprite.boundingBox();
   const centerX = spriteBox.x + spriteBox.width / 2;
@@ -677,15 +728,13 @@ test("the sprite menu anchor follows the sprite's rotation while its control sta
   const handleBox = await rotateHandle.boundingBox();
   await page.mouse.move(handleBox.x + handleBox.width / 2, handleBox.y + handleBox.height / 2);
   await page.mouse.down();
-  await page.mouse.move(centerX + 100, centerY);
+  await page.mouse.move(centerX + 70, centerY - 70);
   await page.mouse.up();
   await expect(page.getByRole("status")).toHaveText("Saved on this device");
-  expect(await spriteRotation(page, "Compass Rose")).toBeCloseTo(90, 0);
+  expect(await spriteRotation(page, "Compass Rose")).toBeCloseTo(45, 0);
 
-  const rotated = await offsetFromSpriteCenter();
-  expect(rotated.y).toBeGreaterThan(Math.abs(rotated.x));
-  expect(Math.abs(Math.hypot(rotated.x, rotated.y) - Math.hypot(unrotated.x, unrotated.y))).toBeLessThan(2);
-  expect(await onScreenRotation()).toBe(0);
+  // Rotated 45 degrees the sprite's footprint is taller; the card is still upright and below it.
+  expect(await cardPlacement()).toEqual({ belowSprite: true, centeredOnSprite: true, rotation: 0 });
 });
 
 test("sprite selection and saving keep the canvas and image preview in place", async ({ page }) => {
@@ -722,7 +771,7 @@ test("sprite selection and saving keep the canvas and image preview in place", a
 test("adding a sprite leaves the canvas, backdrop, name field, and existing sprites untouched", async ({ page }) => {
   await page.goto("/");
   await page.getByRole("button", { name: "Create environment" }).click();
-  await page.getByLabel("Choose backdrop image").setInputFiles(validImage("steady_backdrop.png"));
+  await uploadBackdrop(page, validImage("steady_backdrop.png"));
   await expect(page.getByRole("img", { name: "Environment backdrop" })).toBeVisible();
   await page.getByLabel("Add sprite image").setInputFiles(validImage("first_lamp.png"));
   await expect(page.getByRole("button", { name: "First Lamp", exact: true })).toBeVisible();
@@ -876,10 +925,12 @@ test("educators can drop, move, constrain, layer, resize proportionally, and reo
     const bounds = element.getBoundingClientRect();
     return { x: bounds.x, y: bounds.y, width: bounds.width, height: bounds.height };
   });
+  // The activity area is 16:9, so a sprite 14% wide is 14% × 16/9 ≈ 25% tall: it stops with its
+  // center 7% in from the sides and about 12.5% in from the top and bottom.
   await moveBirdTo(canvasBox.x - 200, canvasBox.y - 200);
-  await expect.poll(() => spriteGeometry(page, "First Bird")).toMatchObject({ centerX: expect.closeTo(0.07, 1), centerY: expect.closeTo(0.07, 1) });
+  await expect.poll(() => spriteGeometry(page, "First Bird")).toMatchObject({ centerX: expect.closeTo(0.07, 1), centerY: expect.closeTo(0.125, 1) });
   await moveBirdTo(canvasBox.x + canvasBox.width + 200, canvasBox.y + canvasBox.height + 200);
-  await expect.poll(() => spriteGeometry(page, "First Bird")).toMatchObject({ centerX: expect.closeTo(0.93, 1), centerY: expect.closeTo(0.93, 1) });
+  await expect.poll(() => spriteGeometry(page, "First Bird")).toMatchObject({ centerX: expect.closeTo(0.93, 1), centerY: expect.closeTo(0.875, 1) });
 
   await page.locator(".activity-canvas").evaluate((activityCanvas) => {
     const bounds = activityCanvas.getBoundingClientRect();
@@ -906,14 +957,14 @@ test("educators can drop, move, constrain, layer, resize proportionally, and reo
   await page.getByRole("button", { name: "Home" }).click();
   await page.reload();
   await openLibrary(page);
-  await page.getByRole("button", { name: "Edit" }).click();
+  await page.getByRole("button", { name: "Edit" }).last().click();
   await expect(firstBird).toBeVisible();
   await expect(secondFox).toBeVisible();
   await expect(droppedOwl).toBeVisible();
   await expect(firstBird).toHaveCSS("z-index", "3");
   await expect.poll(() => spriteGeometry(page, "First Bird")).toMatchObject({
     centerX: expect.closeTo(0.93, 1),
-    centerY: expect.closeTo(0.93, 1),
+    centerY: expect.closeTo(0.875, 1),
   });
 
   await page.setViewportSize({ width: 500, height: 800 });
@@ -924,40 +975,51 @@ test("educators can drop, move, constrain, layer, resize proportionally, and reo
   });
 });
 
-test("the sprite menu offers rename, replace image, and delete, and closes on outside interaction", async ({ page }) => {
+test("right-clicking a sprite opens a context menu with the card's actions, which closes on Escape or an outside click", async ({ page }) => {
   await page.goto("/");
   await openLibrary(page);
   await page.getByRole("button", { name: "Create environment" }).click();
   await chooseBlankBackdrop(page);
   await page.getByLabel("Add sprite image").setInputFiles(validImage("garden_gnome.png"));
 
-  const trigger = page.getByRole("button", { name: "Sprite options for Garden Gnome" });
-  await expect(trigger).toBeVisible();
-  await trigger.click();
-  await expect(page.getByRole("menuitem", { name: "Rename" })).toBeVisible();
-  await expect(page.getByLabel("Replace image")).toBeAttached();
-  await expect(page.getByRole("menuitem", { name: "Delete" })).toBeVisible();
+  const sprite = page.getByRole("button", { name: "Garden Gnome", exact: true });
+  await expect(sprite).toBeVisible();
+  await sprite.click({ button: "right" });
+  const menu = page.getByRole("menu");
+  await expect(menu).toBeVisible();
+  await expect(menu.getByRole("menuitem", { name: "Rename" })).toBeVisible();
+  await expect(menu.getByLabel("Replace image")).toBeAttached();
+  await expect(menu.getByRole("menuitem", { name: "Add sound" })).toBeVisible();
+  await expect(menu.getByRole("menuitem", { name: "Duplicate" })).toBeVisible();
+  await expect(menu.getByRole("menuitem", { name: "Delete" })).toBeVisible();
 
   await page.keyboard.press("Escape");
-  await expect(page.getByRole("menuitem", { name: "Rename" })).toHaveCount(0);
-  await expect(page.getByRole("button", { name: "Garden Gnome", exact: true })).toHaveAttribute("aria-pressed", "true");
+  await expect(menu).toHaveCount(0);
+  await expect(sprite).toHaveAttribute("aria-pressed", "true");
 
-  await trigger.click();
-  await expect(page.getByRole("menuitem", { name: "Rename" })).toBeVisible();
+  await sprite.click({ button: "right" });
+  await expect(menu).toBeVisible();
   await page.locator(".activity-canvas").click({ position: { x: 5, y: 5 } });
-  await expect(page.getByRole("menuitem", { name: "Rename" })).toHaveCount(0);
+  await expect(menu).toHaveCount(0);
+
+  // The menu's Duplicate does what the card's Duplicate does: a second, selected copy appears.
+  await sprite.click({ button: "right" });
+  await menu.getByRole("menuitem", { name: "Duplicate" }).click();
+  await expect(page.getByRole("button", { name: "Garden Gnome", exact: true })).toHaveCount(2);
+  await expect(page.getByRole("status")).toHaveText("Saved on this device");
 });
 
-test("educators can rename a sprite from its menu and the name survives reload", async ({ page }) => {
+test("educators can rename a sprite from its card and the name survives reload", async ({ page }) => {
   await page.goto("/");
   await openLibrary(page);
   await page.getByRole("button", { name: "Create environment" }).click();
   await chooseBlankBackdrop(page);
   await page.getByLabel("Add sprite image").setInputFiles(validImage("old_name.png"));
 
-  await page.getByRole("button", { name: "Sprite options for Old Name" }).click();
-  await page.getByRole("menuitem", { name: "Rename" }).click();
+  await spriteButton(page, "Old Name").click();
+  await page.getByRole("button", { name: "Rename Old Name" }).click();
   const nameField = page.getByLabel("Sprite name");
+  await expect(nameField).toBeFocused();
   await nameField.fill("Whispering Willow");
   await nameField.press("Enter");
 
@@ -967,7 +1029,7 @@ test("educators can rename a sprite from its menu and the name survives reload",
   await page.getByRole("button", { name: "Home" }).click();
   await page.reload();
   await openLibrary(page);
-  await page.getByRole("button", { name: "Edit" }).click();
+  await page.getByRole("button", { name: "Edit" }).last().click();
   await expect(page.getByRole("button", { name: "Whispering Willow", exact: true })).toBeVisible();
 });
 
@@ -981,14 +1043,13 @@ test("replacing a sprite's image validates the file and preserves its position, 
   await expect(page.getByRole("status")).toHaveText("Saved on this device");
 
   const before = await spriteGeometry(page, "River Otter");
-  await page.getByRole("button", { name: "Sprite options for River Otter" }).click();
+  await spriteButton(page, "River Otter").click();
 
-  const replace = page.getByLabel("Replace image");
+  const replace = page.getByRole("toolbar", { name: "Sprite options for River Otter" }).getByLabel("Replace image");
   await replace.setInputFiles({ name: "notes.txt", mimeType: "text/plain", buffer: Buffer.from("not an image") });
   await expect(page.getByRole("alert")).toHaveText("Choose a PNG, JPEG, or WebP image.");
 
-  await page.getByRole("button", { name: "Sprite options for River Otter" }).click();
-  await page.getByLabel("Replace image").setInputFiles(validImage("river_otter_v2.png"));
+  await replace.setInputFiles(validImage("river_otter_v2.png"));
 
   await expect(page.getByRole("button", { name: "River Otter", exact: true })).toBeVisible();
   await expect(page.getByRole("status")).toHaveText("Saved on this device");
@@ -1001,7 +1062,7 @@ test("replacing a sprite's image validates the file and preserves its position, 
   await page.getByRole("button", { name: "Home" }).click();
   await page.reload();
   await openLibrary(page);
-  await page.getByRole("button", { name: "Edit" }).click();
+  await page.getByRole("button", { name: "Edit" }).last().click();
   await expect(page.getByRole("button", { name: "River Otter", exact: true })).toBeVisible();
   await expect.poll(() => spriteGeometry(page, "River Otter")).toMatchObject({
     centerX: expect.closeTo(before.centerX, 2),
@@ -1010,27 +1071,37 @@ test("replacing a sprite's image validates the file and preserves its position, 
   });
 });
 
-test("the sprite menu can be opened and its actions triggered with the keyboard alone", async ({ page }) => {
+test("the sprite card can be reached and used with the keyboard alone, and Delete removes the selected sprite", async ({ page }) => {
   await page.goto("/");
   await openLibrary(page);
   await page.getByRole("button", { name: "Create environment" }).click();
   await chooseBlankBackdrop(page);
   await page.getByLabel("Add sprite image").setInputFiles(validImage("keyboard_kite.png"));
-  await expect(page.getByRole("button", { name: "Keyboard Kite", exact: true })).toBeVisible();
+  const sprite = page.getByRole("button", { name: "Keyboard Kite", exact: true });
+  await expect(sprite).toBeVisible();
+  await expect(page.getByRole("status")).toHaveText("Saved on this device");
 
-  const trigger = page.getByRole("button", { name: "Sprite options for Keyboard Kite" });
-  await trigger.focus();
+  // Tab moves from the sprite into its card: rename, add sound, replace image, duplicate, delete.
+  await sprite.focus();
+  await page.keyboard.press("Tab");
+  await expect(page.getByRole("button", { name: "Rename Keyboard Kite" })).toBeFocused();
+  await page.keyboard.press("Tab");
+  await expect(page.getByRole("button", { name: "Add sound" })).toBeFocused();
+  await page.keyboard.press("Tab");
+  await page.keyboard.press("Tab");
+  await expect(page.getByRole("button", { name: "Duplicate" })).toBeFocused();
+  await page.keyboard.press("Tab");
+  await expect(page.getByRole("button", { name: "Delete" })).toBeFocused();
   await page.keyboard.press("Enter");
-  await expect(page.getByRole("menuitem", { name: "Rename" })).toBeFocused();
+  await expect(sprite).toHaveCount(0);
+  await expect(page.getByRole("button", { name: "Undo" })).toBeEnabled();
 
-  await page.keyboard.press("Tab");
-  await page.keyboard.press("Tab");
-  await page.keyboard.press("Tab");
-  await expect(page.getByRole("menuitem", { name: "Delete" })).toBeFocused();
-  await page.keyboard.press("Enter");
-
-  await expect(page.getByRole("button", { name: "Keyboard Kite", exact: true })).toHaveCount(0);
-  await expect(page.getByRole("button", { name: "Undo" })).toBeVisible();
+  // The Delete key on a selected sprite does the same.
+  await page.getByRole("button", { name: "Undo" }).click();
+  await expect(sprite).toBeVisible();
+  await sprite.click();
+  await page.keyboard.press("Delete");
+  await expect(sprite).toHaveCount(0);
 });
 
 test("dropping an image directly on an existing sprite creates a new sprite instead of replacing it", async ({ page }) => {
@@ -1082,8 +1153,8 @@ test("deleting a sprite can be undone from the editor history, and deletion pers
   await expect(page.getByRole("status")).toHaveText("Saved on this device");
 
   const before = await spriteGeometry(page, "Doomed Kettle");
-  await page.getByRole("button", { name: "Sprite options for Doomed Kettle" }).click();
-  await page.getByRole("menuitem", { name: "Delete" }).click();
+  await spriteButton(page, "Doomed Kettle").click();
+  await page.getByRole("toolbar", { name: "Sprite options for Doomed Kettle" }).getByRole("button", { name: "Delete" }).click();
 
   await expect(page.getByRole("button", { name: "Doomed Kettle", exact: true })).toHaveCount(0);
   await expect(page.getByRole("button", { name: "Undo" })).toBeVisible();
@@ -1097,12 +1168,12 @@ test("deleting a sprite can be undone from the editor history, and deletion pers
   });
 
   await page.getByRole("button", { name: "Kept Lantern", exact: true }).click();
-  await page.getByRole("button", { name: "Sprite options for Kept Lantern" }).click();
-  await page.getByRole("menuitem", { name: "Delete" }).click();
+  await spriteButton(page, "Kept Lantern").click();
+  await page.getByRole("toolbar", { name: "Sprite options for Kept Lantern" }).getByRole("button", { name: "Delete" }).click();
   await page.getByRole("button", { name: "Home" }).click();
   await page.reload();
   await openLibrary(page);
-  await page.getByRole("button", { name: "Edit" }).click();
+  await page.getByRole("button", { name: "Edit" }).last().click();
   await expect(page.getByRole("button", { name: "Kept Lantern", exact: true })).toHaveCount(0);
   await expect(page.getByRole("button", { name: "Doomed Kettle", exact: true })).toBeVisible();
 });
@@ -1119,7 +1190,7 @@ test("editor and learner activity stay within the document viewport on desktop a
   await expectDocumentViewportContained(page);
 
   await page.getByRole("button", { name: "Home" }).click();
-  await page.getByRole("button", { name: "Play Park" }).click();
+  await page.getByRole("button", { name: "Play A day at the park" }).click();
   await expect(page.getByRole("heading", { name: "A day at the park" })).toBeVisible();
   await expectDocumentViewportContained(page);
 
@@ -1173,7 +1244,7 @@ test("no surface scrolls sideways at a narrow width", async ({ page }) => {
   await expect(page.getByRole("heading", { name: "Your environments" })).toBeVisible();
   await noSidewaysScroll();
 
-  await page.getByRole("button", { name: "Play Park" }).click();
+  await page.getByRole("button", { name: "Play A day at the park" }).click();
   await expect(page.getByRole("heading", { name: "A day at the park" })).toBeVisible();
   await noSidewaysScroll();
 });
@@ -1199,7 +1270,7 @@ test("shows recovery guidance for a corrupt saved environment", async ({ page })
   await openLibrary(page);
 
   await expect(page.getByRole("alert")).toHaveText(/saved environment could not be read/i);
-  await expect(page.getByRole("heading", { name: "Park" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Your environments" })).toBeVisible();
 });
 
 test("shows recovery guidance when browser storage is unavailable", async ({ page }) => {
@@ -1250,28 +1321,37 @@ test("an educator can attach a sound through the sprite menu with an editable, p
   await expect(page.getByRole("button", { name: "Wind Chime", exact: true })).toBeVisible();
   await expect(page.getByRole("status")).toHaveText("Saved on this device");
 
-  await page.getByRole("button", { name: "Sprite options for Wind Chime" }).click();
-  await expect(page.getByRole("menuitem", { name: "Add sound" })).toBeVisible();
+  await openSpriteSound(page, "Wind Chime");
   await page.getByLabel("Add sound").setInputFiles(validAudio("gentle_chime_ring.mp3"));
 
   await expect(page.getByRole("heading", { name: "Label this sound" })).toBeVisible();
   const labelField = page.getByLabel("Sound label");
   await expect(labelField).toHaveValue("Gentle Chime Ring");
   await labelField.fill("Wind chime ringing");
-  await page.getByRole("button", { name: "Add sound" }).click();
+  await soundModal(page).getByRole("button", { name: "Add sound" }).click();
 
   await expect(page.getByRole("heading", { name: "Label this sound" })).toHaveCount(0);
   await expect(page.getByRole("status")).toHaveText("Saved on this device");
-  await page.getByRole("button", { name: "Sprite options for Wind Chime" }).click();
-  await expect(page.getByRole("menuitem", { name: "Replace sound" })).toBeVisible();
+  // The card now shows the sound by its label, with a play control beside it.
+  const card = page.getByRole("toolbar", { name: "Sprite options for Wind Chime" });
+  await expect(card.getByRole("button", { name: "Wind chime ringing" })).toBeVisible();
+  await expect(card.getByRole("button", { name: "Play sound for Wind Chime" })).toBeVisible();
 
   await page.getByRole("button", { name: "Home" }).click();
   await page.reload();
   await openLibrary(page);
-  await page.getByRole("button", { name: "Edit" }).click();
+  await page.getByRole("button", { name: "Edit" }).last().click();
   await page.getByRole("button", { name: "Wind Chime", exact: true }).click();
-  await page.getByRole("button", { name: "Sprite options for Wind Chime" }).click();
-  await expect(page.getByRole("menuitem", { name: "Replace sound" })).toBeVisible();
+  await expect(card.getByRole("button", { name: "Wind chime ringing" })).toBeVisible();
+
+  // Opening the sound again shows it, with its label ready to edit.
+  await card.getByRole("button", { name: "Wind chime ringing" }).click();
+  await expect(page.getByRole("dialog", { name: "Wind chime ringing" })).toBeVisible();
+  await expect(soundModal(page).getByRole("button", { name: "Play sound" })).toBeVisible();
+  await page.getByLabel("Sound label").fill("Chime");
+  await soundModal(page).getByRole("button", { name: "Save label" }).click();
+  await expect(page.getByRole("status")).toHaveText("Saved on this device");
+  await expect(card.getByRole("button", { name: "Chime", exact: true })).toBeVisible();
 });
 
 test("dropping a sound onto the selected sprite attaches it; dropping elsewhere is rejected with guidance", async ({ page }) => {
@@ -1322,21 +1402,19 @@ test("unsupported, oversized, and damaged audio receive friendly guidance", asyn
   await expect(page.getByRole("button", { name: "Clock Tower", exact: true })).toBeVisible();
   await expect(page.getByRole("status")).toHaveText("Saved on this device");
 
-  await page.getByRole("button", { name: "Sprite options for Clock Tower" }).click();
+  await openSpriteSound(page, "Clock Tower");
   const picker = page.getByLabel("Add sound");
   await picker.setInputFiles({ name: "notes.txt", mimeType: "text/plain", buffer: Buffer.from("not audio") });
   await expect(page.getByRole("alert")).toHaveText("Choose an MP3, WAV, or M4A audio file.");
 
-  await page.getByRole("button", { name: "Sprite options for Clock Tower" }).click();
-  await page.getByLabel("Add sound").setInputFiles({ name: "huge.mp3", mimeType: "audio/mpeg", buffer: Buffer.alloc(20 * 1024 * 1024 + 1) });
+  await picker.setInputFiles({ name: "huge.mp3", mimeType: "audio/mpeg", buffer: Buffer.alloc(20 * 1024 * 1024 + 1) });
   await expect(page.getByRole("alert")).toHaveText("Choose an audio file smaller than 20 MB.");
 
-  await page.getByRole("button", { name: "Sprite options for Clock Tower" }).click();
-  await page.getByLabel("Add sound").setInputFiles({ name: "broken.mp3", mimeType: "audio/mpeg", buffer: Buffer.from("these bytes are not audio") });
+  await picker.setInputFiles({ name: "broken.mp3", mimeType: "audio/mpeg", buffer: Buffer.from("these bytes are not audio") });
   await expect(page.getByRole("alert")).toHaveText(/audio could not be opened/i);
 });
 
-test("replacing an existing sprite sound requires confirmation", async ({ page }) => {
+test("replacing or removing an existing sprite sound happens from the sound window and can be backed out of", async ({ page }) => {
   await page.goto("/");
   await openLibrary(page);
   await page.getByRole("button", { name: "Create environment" }).click();
@@ -1345,25 +1423,35 @@ test("replacing an existing sprite sound requires confirmation", async ({ page }
   await expect(page.getByRole("button", { name: "Bell Tower", exact: true })).toBeVisible();
   await expect(page.getByRole("status")).toHaveText("Saved on this device");
 
-  await page.getByRole("button", { name: "Sprite options for Bell Tower" }).click();
+  await openSpriteSound(page, "Bell Tower");
   await page.getByLabel("Add sound").setInputFiles(validAudio("first_ring.mp3"));
-  await page.getByRole("button", { name: "Add sound" }).click();
+  await soundModal(page).getByRole("button", { name: "Add sound" }).click();
   await expect(page.getByRole("status")).toHaveText("Saved on this device");
+  const card = page.getByRole("toolbar", { name: "Sprite options for Bell Tower" });
+  await expect(card.getByRole("button", { name: "First Ring" })).toBeVisible();
 
-  await page.getByRole("button", { name: "Sprite options for Bell Tower" }).click();
+  // Choosing a replacement shows it for review; Cancel keeps the first sound.
+  await openSpriteSound(page, "Bell Tower");
+  await expect(page.getByRole("dialog", { name: "First Ring" })).toBeVisible();
   await page.getByLabel("Replace sound").setInputFiles(validAudio("second_ring.mp3"));
-  await expect(page.getByRole("heading", { name: "Replace this sound?" })).toBeVisible();
-  await page.getByRole("button", { name: "Cancel" }).click();
-  await expect(page.getByRole("heading", { name: "Replace this sound?" })).toHaveCount(0);
-  await expect(page.getByRole("heading", { name: "Label this sound" })).toHaveCount(0);
-
-  await page.getByRole("button", { name: "Sprite options for Bell Tower" }).click();
-  await page.getByLabel("Replace sound").setInputFiles(validAudio("second_ring.mp3"));
-  await page.getByRole("button", { name: "Replace sound" }).click();
-  await expect(page.getByRole("heading", { name: "Label this sound" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Replace this sound" })).toBeVisible();
   await expect(page.getByLabel("Sound label")).toHaveValue("Second Ring");
-  await page.getByRole("button", { name: "Replace sound" }).click();
+  await soundModal(page).getByRole("button", { name: "Cancel" }).click();
+  await expect(page.getByRole("heading", { name: "Replace this sound" })).toHaveCount(0);
+  await expect(card.getByRole("button", { name: "First Ring" })).toBeVisible();
+
+  await openSpriteSound(page, "Bell Tower");
+  await page.getByLabel("Replace sound").setInputFiles(validAudio("second_ring.mp3"));
+  await soundModal(page).getByRole("button", { name: "Replace sound" }).click();
   await expect(page.getByRole("status")).toHaveText("Saved on this device");
+  await expect(card.getByRole("button", { name: "Second Ring" })).toBeVisible();
+
+  // Removing the sound leaves the sprite in place, without a sound.
+  await openSpriteSound(page, "Bell Tower");
+  await soundModal(page).getByRole("button", { name: "Remove sound" }).click();
+  await expect(page.getByRole("status")).toHaveText("Saved on this device");
+  await expect(card.getByRole("button", { name: "Add sound" })).toBeVisible();
+  await expect(page.getByRole("button", { name: "Bell Tower", exact: true })).toBeVisible();
 });
 
 test("blank, image, and missing backdrop states are distinct undo and redo steps", async ({ page }) => {
@@ -1377,10 +1465,9 @@ test("blank, image, and missing backdrop states are distinct undo and redo steps
   await expect(page.locator(".editor-backdrop.blank-backdrop")).toHaveCSS("background-color", "rgb(255, 255, 255)");
 
   await page.getByRole("button", { name: "Change backdrop" }).click();
-  await page.getByLabel("Choose backdrop image").setInputFiles(validImage("history_backdrop.png"));
-  await expect(page.getByRole("heading", { name: "Replace this backdrop?" })).toHaveCount(0);
+  await uploadBackdrop(page, validImage("history_backdrop.png"));
   await expect(page.getByRole("img", { name: "Environment backdrop" })).toBeVisible();
-  await page.getByRole("button", { name: "Close" }).click();
+  await expect(page.getByRole("dialog", { name: "Change backdrop" })).toHaveCount(0);
 
   await page.getByRole("button", { name: "Undo" }).click();
   await expect(page.locator(".editor-backdrop.blank-backdrop")).toBeVisible();
@@ -1402,9 +1489,9 @@ test("a blank white backdrop persists, appears in the library, and is playable",
   await page.getByLabel("Environment name").press("Tab");
   await chooseBlankBackdrop(page);
   await page.getByLabel("Add sprite image").setInputFiles(validImage("marker.png"));
-  await page.getByRole("button", { name: "Sprite options for Marker" }).click();
+  await openSpriteSound(page, "Marker");
   await page.getByLabel("Add sound").setInputFiles(validAudio("marker_tap.mp3"));
-  await page.getByRole("button", { name: "Add sound" }).click();
+  await soundModal(page).getByRole("button", { name: "Add sound" }).click();
   await expect(page.getByRole("button", { name: "Preview" })).toBeEnabled();
 
   await page.getByRole("button", { name: "Home" }).click();
@@ -1445,16 +1532,16 @@ test("an environment becomes playable once it has a name, a backdrop, and a spri
   await expect(page.getByRole("status")).toHaveText("Saved on this device");
   await expect(page.getByText(/This draft needs a backdrop and at least one sprite with a sound/i)).toBeVisible();
 
-  await page.getByLabel("Choose backdrop image").setInputFiles(validImage("yard.png"));
+  await uploadBackdrop(page, validImage("yard.png"));
   await expect(page.getByText(/This draft needs at least one sprite with a sound/i)).toBeVisible();
 
   await page.getByLabel("Add sprite image").setInputFiles(validImage("cricket.png"));
   await expect(page.getByRole("button", { name: "Cricket", exact: true })).toBeVisible();
   await expect(page.getByText(/This draft needs at least one sprite with a sound/i)).toBeVisible();
 
-  await page.getByRole("button", { name: "Sprite options for Cricket" }).click();
+  await openSpriteSound(page, "Cricket");
   await page.getByLabel("Add sound").setInputFiles(validAudio("cricket_chirp.mp3"));
-  await page.getByRole("button", { name: "Add sound" }).click();
+  await soundModal(page).getByRole("button", { name: "Add sound" }).click();
   await expect(page.getByRole("status")).toHaveText("Saved on this device");
   await expect(page.getByText("This environment is ready to play.")).toBeVisible();
 
@@ -1485,15 +1572,14 @@ test("a draft names the requirement it is waiting on instead of saying it is not
   await expect(cardPlay).toBeDisabled();
   await expect(cardPlay).toHaveText("Needs a backdrop");
   await expect(cardPlay).toHaveAttribute("title", /This draft needs a backdrop/);
-  await expect(page.getByRole("button", { name: "Play Kitchen" })).toHaveText("Needs a sound");
 
   await card.getByRole("button", { name: "Edit" }).click();
-  await page.getByLabel("Choose backdrop image").setInputFiles(validImage("meadow.png"));
+  await uploadBackdrop(page, validImage("meadow.png"));
   await page.getByLabel("Add sprite image").setInputFiles(validImage("cricket.png"));
   await expect(page.getByRole("button", { name: "Cricket", exact: true })).toBeVisible();
-  await page.getByRole("button", { name: "Sprite options for Cricket" }).click();
+  await openSpriteSound(page, "Cricket");
   await page.getByLabel("Add sound").setInputFiles(validAudio("cricket_chirp.mp3"));
-  await page.getByRole("button", { name: "Add sound" }).click();
+  await soundModal(page).getByRole("button", { name: "Add sound" }).click();
   await expect(page.getByRole("status")).toHaveText("Saved on this device");
 
   await expect(page.getByRole("button", { name: "Preview" })).toBeVisible();
@@ -1507,13 +1593,13 @@ test("Preview renders the saved backdrop, sprite geometry, rotation, and layer o
   await page.getByRole("button", { name: "Create environment" }).click();
   await page.getByLabel("Environment name").fill("Garden sounds");
   await page.getByLabel("Environment name").press("Tab");
-  await page.getByLabel("Choose backdrop image").setInputFiles(validImage("garden_bg.png"));
+  await uploadBackdrop(page, validImage("garden_bg.png"));
 
   await page.getByLabel("Add sprite image").setInputFiles(validImage("bee.png"));
   await expect(page.getByRole("button", { name: "Bee", exact: true })).toBeVisible();
-  await page.getByRole("button", { name: "Sprite options for Bee" }).click();
+  await openSpriteSound(page, "Bee");
   await page.getByLabel("Add sound").setInputFiles(validAudio("bee_buzz.mp3"));
-  await page.getByRole("button", { name: "Add sound" }).click();
+  await soundModal(page).getByRole("button", { name: "Add sound" }).click();
   await expect(page.getByRole("status")).toHaveText("Saved on this device");
 
   // Drop Pebble far from Bee's current (still-default-centered) position so the two never overlap.
@@ -1581,13 +1667,13 @@ test("Play from the library only selects sounded sprites as questions, keeps sou
   await page.getByRole("button", { name: "Create environment" }).click();
   await page.getByLabel("Environment name").fill("Pond sounds");
   await page.getByLabel("Environment name").press("Tab");
-  await page.getByLabel("Choose backdrop image").setInputFiles(validImage("pond_bg.png"));
+  await uploadBackdrop(page, validImage("pond_bg.png"));
 
   await page.getByLabel("Add sprite image").setInputFiles(validImage("frog.png"));
   await expect(page.getByRole("button", { name: "Frog", exact: true })).toBeVisible();
-  await page.getByRole("button", { name: "Sprite options for Frog" }).click();
+  await openSpriteSound(page, "Frog");
   await page.getByLabel("Add sound").setInputFiles(validAudio("frog_croak.mp3"));
-  await page.getByRole("button", { name: "Add sound" }).click();
+  await soundModal(page).getByRole("button", { name: "Add sound" }).click();
   await expect(page.getByRole("status")).toHaveText("Saved on this device");
 
   // Drop Lily Pad far from Frog's default-centered position so the two never overlap.
@@ -1643,11 +1729,11 @@ test("custom activity media failures provide visible recovery guidance", async (
   await page.getByRole("button", { name: "Create environment" }).click();
   await page.getByLabel("Environment name").fill("Creek sounds");
   await page.getByLabel("Environment name").press("Tab");
-  await page.getByLabel("Choose backdrop image").setInputFiles(validImage("creek.png"));
+  await uploadBackdrop(page, validImage("creek.png"));
   await page.getByLabel("Add sprite image").setInputFiles(validImage("duck.png"));
-  await page.getByRole("button", { name: "Sprite options for Duck" }).click();
+  await openSpriteSound(page, "Duck");
   await page.getByLabel("Add sound").setInputFiles(validAudio("quack.mp3"));
-  await page.getByRole("button", { name: "Add sound" }).click();
+  await soundModal(page).getByRole("button", { name: "Add sound" }).click();
   await expect(page.getByRole("status")).toHaveText("Saved on this device");
   await page.getByRole("button", { name: "Home" }).click();
 
@@ -1686,7 +1772,7 @@ test("custom activity media failures provide visible recovery guidance", async (
   await expect(page.getByRole("status")).toHaveText("An image in this environment could not be displayed. Return to the editor and replace the affected image.");
 });
 
-test("user-created cards offer Duplicate and Delete behind one menu while Park and Kitchen offer neither", async ({ page }) => {
+test("every card offers Duplicate and Delete behind one menu, the Park example included", async ({ page }) => {
   await page.setViewportSize({ width: 400, height: 760 });
   await page.goto("/");
   await page.getByRole("button", { name: "Create environment" }).click();
@@ -1695,8 +1781,7 @@ test("user-created cards offer Duplicate and Delete behind one menu while Park a
   await expect(page.getByRole("status")).toHaveText("Saved on this device");
   await page.getByRole("button", { name: "Home" }).click();
 
-  await expect(libraryCard(page, "Park").getByRole("button", { name: /More options/ })).toHaveCount(0);
-  await expect(libraryCard(page, "Kitchen").getByRole("button", { name: /More options/ })).toHaveCount(0);
+  await expect(libraryCard(page, "A day at the park").getByRole("button", { name: /More options/ })).toHaveCount(1);
   await expect(page.getByRole("menuitem", { name: "Duplicate" })).toHaveCount(0);
   await expect(page.getByRole("menuitem", { name: "Delete" })).toHaveCount(0);
 
@@ -1801,14 +1886,13 @@ test("the copy is independent: editing it leaves the original alone, and deletin
   await page.getByLabel("Environment name").fill("Renamed copy");
   await page.getByLabel("Environment name").press("Enter");
   await page.getByRole("button", { name: "Singing Lark", exact: true }).click();
-  await page.getByRole("button", { name: "Sprite options for Singing Lark" }).click();
-  await page.getByRole("menuitem", { name: "Rename" }).click();
+  await page.getByRole("button", { name: "Rename Singing Lark" }).click();
   await page.getByLabel("Sprite name").fill("Copied Lark");
   await page.getByLabel("Sprite name").press("Enter");
   await expect(page.getByRole("button", { name: "Copied Lark", exact: true })).toBeVisible();
   await page.getByRole("button", { name: "Quiet Stone", exact: true }).click();
-  await page.getByRole("button", { name: "Sprite options for Quiet Stone" }).click();
-  await page.getByRole("menuitem", { name: "Delete" }).click();
+  await spriteButton(page, "Quiet Stone").click();
+  await page.getByRole("toolbar", { name: "Sprite options for Quiet Stone" }).getByRole("button", { name: "Delete" }).click();
   await expect(page.getByRole("button", { name: "Quiet Stone", exact: true })).toHaveCount(0);
   await expect(page.getByRole("status")).toHaveText("Saved on this device");
 
@@ -1894,9 +1978,8 @@ test("a confirmed delete removes the environment and its media from this device,
   await expect(page.getByRole("heading", { name: "Your environments" })).toBeVisible();
   await expect(page).toHaveURL("/");
 
-  // The protected starters are untouched by any of this.
-  await expect(page.getByRole("heading", { name: "Park" })).toBeVisible();
-  await expect(page.getByRole("heading", { name: "Kitchen" })).toBeVisible();
+  // The Park example is untouched by any of this.
+  await expect(page.getByRole("heading", { name: "A day at the park" })).toBeVisible();
 });
 
 test("a copy that cannot be saved leaves the original intact with visible recovery guidance", async ({ page }) => {

@@ -231,7 +231,12 @@ async function loadEnvironments() {
     if (!records.every(isEnvironmentRecord)) {
       throw new Error("Saved environment could not be read");
     }
-    environments = records.map(environmentWithoutSessionState);
+    // The Park example always leads the library; everything else keeps its stored order.
+    const loaded = records.map(environmentWithoutSessionState);
+    environments = [
+      ...loaded.filter((environment) => environment.id === parkEnvironmentId),
+      ...loaded.filter((environment) => environment.id !== parkEnvironmentId),
+    ];
     saveState = "saved";
   } catch (error) {
     saveState = "failed";
@@ -2050,7 +2055,7 @@ async function beginAttachSound(spriteId, file) {
   soundFlow = {
     spriteId,
     file,
-    label: replacing ? sprite.sound.label : spriteNameFromFilename(file.name),
+    label: spriteNameFromFilename(file.name),
     replacing,
     stage: "label",
   };
