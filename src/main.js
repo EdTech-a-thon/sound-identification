@@ -6,6 +6,17 @@ import { measureSpriteImage } from "./image-tools.js";
 import { openBackdropCropper } from "./backdrop-cropper.js";
 import { mountWaveformPlayer } from "./waveform-player.js";
 
+// Cloudflare Web Analytics: the published site is given a beacon token at build time. The
+// editing site has none, so nothing is loaded there.
+const beaconToken = import.meta.env.VITE_CF_BEACON;
+if (beaconToken) {
+  const beacon = document.createElement("script");
+  beacon.src = "https://static.cloudflareinsights.com/beacon.min.js";
+  beacon.defer = true;
+  beacon.dataset.cfBeacon = JSON.stringify({ token: beaconToken });
+  document.head.append(beacon);
+}
+
 const app = document.querySelector("#app");
 let activeEnvironment;
 let activityOrigin;
