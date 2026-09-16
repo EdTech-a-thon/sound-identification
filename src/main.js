@@ -75,7 +75,7 @@ const acceptedImageTypes = ["image/png", "image/jpeg", "image/webp"];
 const iconShapes = {
   // The Home control wears the app's own favicon artwork, so the mark in the browser tab and the
   // mark in the toolbar are the same thing.
-  home: `<rect width="32" height="32" rx="7" fill="#25424a"/><path fill="#fff8e5" d="M5 13h5l6-5a1 1 0 0 1 1.6.8v14.4A1 1 0 0 1 16 24l-6-5H5a1 1 0 0 1-1-1v-4a1 1 0 0 1 1-1Z"/><path fill="none" stroke="#83bd6d" stroke-linecap="round" stroke-width="2.5" d="M21 12.2a5.2 5.2 0 0 1 0 7.6M24.5 8.5a10.2 10.2 0 0 1 0 15"/>`,
+  home: `<rect width="32" height="32" rx="9" fill="#477b70"/><g fill="none" stroke="#fff8e5" stroke-linecap="round" stroke-width="4"><path d="M9 13.5v5"/><path d="M16 9v14"/><path d="M23 13.5v5"/></g>`,
   rename: `<path d="M4 20h4.5L19 9.5a2.1 2.1 0 0 0-3-3L5.5 17Z"/><path d="m13.5 9 3 3"/>`,
   image: `<rect x="3" y="5" width="18" height="14" rx="2.5"/><circle cx="8.6" cy="10" r="1.5"/><path d="m3.5 16.8 4.9-4.3 3.9 3.4 2.9-2.4 5.3 4.2"/>`,
   sound: `<path d="M4 10h3.5l4.5-4v12l-4.5-4H4Z"/><path d="M15.5 9.2a4 4 0 0 1 0 5.6M18.3 6.4a8 8 0 0 1 0 11.2"/>`,
