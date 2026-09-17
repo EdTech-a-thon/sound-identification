@@ -1,5 +1,11 @@
 import { expect, test } from "@playwright/test";
 
+test.beforeEach(async ({ page }) => {
+  await page.addInitScript(() => {
+    localStorage.setItem("sound-explorer.welcomed", "true");
+  });
+});
+
 const validImage = (name = "background.png", mimeType = "image/png") => ({
   name,
   mimeType,
@@ -188,6 +194,32 @@ async function spriteGeometry(page, name, containerSelector = ".activity-canvas"
     widthRatio: sprite.width / canvas.width,
   };
 }
+
+test("first-time visitors see a welcome page, footer, and site information before entering the library", async ({ page }) => {
+  await page.addInitScript(() => {
+    localStorage.removeItem("sound-explorer.welcomed");
+    localStorage.removeItem("sound-explorer.park-added");
+  });
+  await page.goto("/");
+
+  await expect(page.getByRole("heading", { name: "Turn everyday sounds into a learning adventure." })).toBeVisible();
+  await expect(page.getByRole("contentinfo").getByRole("link", { name: "Built by teacher.dev" })).toHaveAttribute("href", "https://teacher.dev");
+  await expect(page.getByRole("contentinfo").getByRole("link", { name: "about" })).toHaveAttribute("href", "/about");
+  await expect(page.getByRole("contentinfo").getByRole("link", { name: "privacy" })).toHaveAttribute("href", "/privacy");
+
+  await page.getByRole("button", { name: "Start creating" }).click();
+  await expect(page.getByRole("heading", { name: "Your environments" })).toBeVisible();
+  await page.getByRole("button", { name: "Help" }).click();
+  await expect(page.getByRole("dialog", { name: "Need a hand?" })).toContainText("support@teacher.dev");
+  await page.getByRole("button", { name: "Close help" }).click();
+  await page.reload();
+  await expect(page.getByRole("heading", { name: "Your environments" })).toBeVisible();
+
+  await page.goto("/about");
+  await expect(page.getByRole("heading", { name: "About Everyday Sound Lab" })).toBeVisible();
+  await page.goto("/privacy");
+  await expect(page.getByRole("heading", { name: "Privacy" })).toBeVisible();
+});
 
 test("every surface has its own address, the Park example included", async ({ page }) => {
   await page.goto("/");

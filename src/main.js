@@ -29,6 +29,7 @@ let completedRounds = 0;
 let activityFinished = false;
 const maxPlaybackSeconds = 5;
 let view = "library";
+let firstVisit = false;
 let environments = [];
 let editingEnvironment;
 let selectedSpriteId;
@@ -50,6 +51,7 @@ let soundFlow;
 let spriteClipboard;
 let spritePreviewAudio;
 let spritePreviewId;
+let helpOpen = false;
 // Library-card state: which card's Duplicate/Delete menu is open, and which environment is
 // waiting on a delete confirmation. Both are session-only, so leaving the library clears them.
 let environmentMenuOpenId;
@@ -110,6 +112,7 @@ const iconShapes = {
   export: `<path d="M12 4.5v10.5"/><path d="m8 11 4 4 4-4"/><path d="M5 19.5h14"/>`,
   import: `<path d="M12 15V4.5"/><path d="m8 8.5 4-4 4 4"/><path d="M5 19.5h14"/>`,
   trash: `<path d="M4.6 7h14.8"/><path d="M9.6 7V5a.9.9 0 0 1 .9-.9h3a.9.9 0 0 1 .9.9v2"/><path d="m6.6 7 .9 11.4A1.7 1.7 0 0 0 9.2 20h5.6a1.7 1.7 0 0 0 1.7-1.6L17.4 7"/><path d="M10.4 10.6v5.8M13.6 10.6v5.8"/>`,
+  help: `<circle cx="12" cy="12" r="9"/><path d="M9.8 9a2.4 2.4 0 1 1 3.4 2.2c-.8.4-1.2.9-1.2 1.8"/><circle class="solid" cx="12" cy="17" r="1"/>`,
 };
 
 function icon(name) {
@@ -122,12 +125,18 @@ function parseRoute(pathname) {
   const [section, id] = pathname.split("/").filter(Boolean).map(decodeURIComponent);
   if (section === "environments" && id) return { name: "editor", id };
   if (section === "play" && id) return { name: "play", id };
+  if (section === "welcome") return { name: "welcome" };
+  if (section === "about") return { name: "about" };
+  if (section === "privacy") return { name: "privacy" };
   return { name: "library" };
 }
 
 function routePath(route) {
   if (route.name === "editor") return `/environments/${encodeURIComponent(route.id)}`;
   if (route.name === "play") return `/play/${encodeURIComponent(route.id)}`;
+  if (route.name === "welcome") return "/welcome";
+  if (route.name === "about") return "/about";
+  if (route.name === "privacy") return "/privacy";
   return "/";
 }
 
@@ -170,6 +179,53 @@ function currentSounds() {
 // The same mark and name lead every screen, and it always goes back to the library.
 function brandMarkup() {
   return `<button class="editor-home brand" type="button" aria-label="Home" title="Home">${icon("home")}<span class="project-name">${projectName}</span></button>`;
+}
+
+function siteWordmark() {
+  return `<a class="site-wordmark" href="/welcome"><img src="/favicon.svg" alt="" width="36" height="36"><span>${projectName}</span></a>`;
+}
+
+function siteFooter() {
+  return `<footer class="site-footer">
+    <a class="site-footer-credit" href="https://teacher.dev" target="_blank" rel="noopener noreferrer">
+      <img src="/edtechathon-logo.svg" alt="" width="24" height="24">
+      <span>Built by teacher.dev</span>
+    </a>
+    <a class="site-footer-link" href="/about">about</a>
+    <a class="site-footer-link" href="/privacy">privacy</a>
+  </footer>`;
+}
+
+function closeHelp() {
+  document.querySelector(".help-backdrop")?.remove();
+  helpOpen = false;
+  document.querySelector(".help-button")?.focus();
+}
+
+function openHelp() {
+  if (helpOpen) return;
+  helpOpen = true;
+  document.body.insertAdjacentHTML("beforeend", `<div class="modal-backdrop help-backdrop" role="presentation">
+    <section class="help-dialog" role="dialog" aria-modal="true" aria-labelledby="help-title">
+      <button class="close-help close-modal" type="button" aria-label="Close help">${icon("close")}</button>
+      <h2 id="help-title">Need a hand?</h2>
+      <p>If you’re running into trouble or have a suggestion, email us at <a href="mailto:support@teacher.dev?subject=Everyday%20Sound%20Lab">support@teacher.dev</a>.</p>
+    </section>
+  </div>`);
+  document.querySelector(".close-help").addEventListener("click", closeHelp);
+  bindModalBackdropClose(".help-dialog", closeHelp);
+  document.querySelector(".close-help").focus();
+}
+
+function mountHelpButton() {
+  const button = document.createElement("button");
+  button.className = "help-button";
+  button.type = "button";
+  button.setAttribute("aria-label", "Help");
+  button.setAttribute("aria-haspopup", "dialog");
+  button.innerHTML = icon("help");
+  button.addEventListener("click", openHelp);
+  document.body.append(button);
 }
 
 function showActivityMediaFailure() {
@@ -782,6 +838,86 @@ function hasParkExample() {
   return environments.some((environment) => environment.id === parkEnvironmentId);
 }
 
+function renderWelcome() {
+  app.innerHTML = `<div class="welcome-page">
+    <header class="welcome-header">
+      ${siteWordmark()}
+      <nav class="welcome-nav" aria-label="Site">
+        <a href="#how-it-works">How it works</a>
+        <a href="/about">About</a>
+        <button class="welcome-start small" type="button">Get started</button>
+      </nav>
+    </header>
+    <main>
+      <section class="welcome-hero">
+        <div class="welcome-hero-copy">
+          <p class="eyebrow">LISTEN · NOTICE · CONNECT</p>
+          <h1>Turn everyday sounds into a learning adventure.</h1>
+          <p class="welcome-lede">Build playful sound-matching activities from the places and objects your learners know. Add a backdrop, place pictures, attach sounds, and you’re ready to play.</p>
+          <button class="welcome-start" type="button">Start creating ${icon("back")}</button>
+          <p class="welcome-fineprint">Free to use. No account needed. Your work stays on this device.</p>
+        </div>
+        <div class="welcome-hero-art"><img class="welcome-art" src="/welcome-art.svg" alt=""></div>
+      </section>
+      <section class="welcome-band" id="how-it-works" aria-labelledby="how-it-works-title">
+        <div class="welcome-section">
+          <p class="eyebrow">HOW IT WORKS</p>
+          <h2 id="how-it-works-title">From your world to a listening game</h2>
+          <ol class="welcome-steps">
+            <li><span>1</span><h3>Choose a scene</h3><p>Upload a photo or begin with a blank space for your activity.</p></li>
+            <li><span>2</span><h3>Add pictures and sounds</h3><p>Place each object where it belongs, then attach its familiar sound.</p></li>
+            <li><span>3</span><h3>Play together</h3><p>Learners listen closely and choose the picture that made each sound.</p></li>
+          </ol>
+        </div>
+      </section>
+      <section class="welcome-section">
+        <div class="welcome-local-card">
+          <h2>Made for classrooms. Private by design.</h2>
+          <p>Your environments, pictures, and sounds are saved in this browser. There is no account to create and your activity files are not uploaded to us.</p>
+          <button class="welcome-start" type="button">Create your first environment</button>
+        </div>
+      </section>
+    </main>
+    ${siteFooter()}
+  </div>`;
+  document.querySelectorAll(".welcome-start").forEach((button) => button.addEventListener("click", () => {
+    markWelcomed();
+    firstVisit = false;
+    navigate({ name: "library" });
+  }));
+}
+
+function infoPageMarkup(page) {
+  if (page === "about") {
+    return `<h1>About Everyday Sound Lab</h1>
+      <p class="info-lede">A free tool for building playful listening and sound-matching activities.</p>
+      <section class="info-card">
+        <div class="info-card-heading"><img src="/edtechathon-logo.svg" alt="" width="42" height="42"><h2>From the EdTech-a-thon</h2></div>
+        <p>Everyday Sound Lab was made at the <a href="https://edtechathon.com" target="_blank" rel="noopener noreferrer">EdTech-a-thon</a>, a community building free tools for classrooms.</p>
+      </section>
+      <section class="info-card"><h2>Our promise</h2><ul><li><strong>Zero paywalls.</strong></li><li><strong>Zero ads.</strong></li><li><strong>Zero tracking of personal data.</strong></li></ul></section>
+      <section class="info-card"><h2>Feedback and ideas</h2><p>We’d love to hear what works, what doesn’t, and what would make the lab more useful for your learners.</p><a class="info-button" href="mailto:support@teacher.dev?subject=Everyday%20Sound%20Lab%20feedback">Email support@teacher.dev</a></section>`;
+  }
+  return `<h1>Privacy</h1>
+    <p class="info-lede">What we collect, what we don’t, and where your activities live.</p>
+    <section class="info-card">
+      <p>Everyday Sound Lab does not collect personal information from teachers or learners. We use Cloudflare Web Analytics to count visits anonymously. It does not use cookies, fingerprint visitors, or follow people across websites. You can read <a href="https://www.cloudflare.com/privacypolicy/" target="_blank" rel="noopener noreferrer">Cloudflare’s privacy policy</a> for details.</p>
+      <p>Your environments, pictures, and sounds are stored by your browser on this device. They are not uploaded to us. Environment exports are also created in your browser and saved directly to your downloads.</p>
+      <p>Questions? Email <a href="mailto:support@teacher.dev?subject=Everyday%20Sound%20Lab%20privacy">support@teacher.dev</a>.</p>
+    </section>`;
+}
+
+function renderInfoPage(page) {
+  app.innerHTML = `<div class="info-page">
+    <header class="welcome-header">
+      ${siteWordmark()}
+      <nav class="welcome-nav" aria-label="Site"><a href="/">Your environments</a></nav>
+    </header>
+    <main class="info-main">${infoPageMarkup(page)}</main>
+    ${siteFooter()}
+  </div>`;
+}
+
 function renderLibrary() {
   const emptyNote = environments.length ? "" : `<p class="library-empty">Nothing here yet. Create an environment to get started.</p>`;
   app.innerHTML = `<main class="library">
@@ -808,6 +944,7 @@ function renderLibrary() {
       </section>
       ${recoveryGuidance()}
     </div>
+    ${siteFooter()}
     ${deleteConfirmationModal()}
   </main>`;
   document.querySelector(".editor-home").addEventListener("click", () => navigate({ name: "library" }));
@@ -1350,6 +1487,8 @@ function render() {
   clearRenderObjectUrls();
   stopSpritePreview();
   document.body.dataset.view = view;
+  if (view === "welcome") return renderWelcome();
+  if (view === "about" || view === "privacy") return renderInfoPage(view);
   if (view === "library") return renderLibrary();
   if (view === "editor") return renderEditor();
   renderActivity();
@@ -1363,7 +1502,10 @@ function applyRoute() {
   clearTimeout(nextSoundTimeoutId);
   if (route.name === "editor") return enterEditor(route.id);
   if (route.name === "play") return enterActivity(route.id, history.state?.origin);
+  if (route.name === "welcome") return enterSitePage("welcome");
+  if (route.name === "about" || route.name === "privacy") return enterSitePage(route.name);
   if (window.location.pathname !== "/") return fallBackToLibrary();
+  if (firstVisit) return enterSitePage("welcome");
   enterLibrary();
 }
 
@@ -1372,6 +1514,16 @@ function applyRoute() {
 function fallBackToLibrary() {
   history.replaceState({ route: "library" }, "", "/");
   enterLibrary();
+}
+
+function enterSitePage(page) {
+  view = page;
+  activeEnvironment = undefined;
+  activityOrigin = undefined;
+  editingEnvironment = undefined;
+  selectedSpriteId = undefined;
+  clearEditorSession();
+  render();
 }
 
 function clearEditorSession() {
@@ -2413,6 +2565,7 @@ document.addEventListener("focusin", (event) => {
 document.addEventListener("keydown", (event) => {
   if (view === "editor" && event.key !== "Escape") return editorKeyboardShortcut(event);
   if (event.key !== "Escape") return;
+  if (helpOpen) return closeHelp();
   if (view === "editor") {
     if (spriteMenu) closeSpriteMenu();
     else if (renameSpriteId) cancelSpriteRename();
@@ -2434,6 +2587,31 @@ window.addEventListener("popstate", applyRoute);
 // opens the app, and only then, so an educator who deletes it later has chosen to. If the first
 // attempt fails (for example, the sound files could not be fetched) it is tried again next visit.
 const parkAddedKey = "sound-explorer.park-added";
+const welcomedKey = "sound-explorer.welcomed";
+
+function hasBeenWelcomed() {
+  try {
+    return localStorage.getItem(welcomedKey) === "true";
+  } catch (error) {
+    return false;
+  }
+}
+
+function markWelcomed() {
+  try {
+    localStorage.setItem(welcomedKey, "true");
+  } catch (error) {
+    // If storage is unavailable, showing the welcome page again is safer than hiding it forever.
+  }
+}
+
+function hasUsedAppBefore() {
+  try {
+    return localStorage.getItem(parkAddedKey) === "true" || environments.length > 0;
+  } catch (error) {
+    return environments.length > 0;
+  }
+}
 
 async function addParkOnFirstRun() {
   let alreadyAdded = false;
@@ -2454,7 +2632,10 @@ async function addParkOnFirstRun() {
 }
 
 async function start() {
+  mountHelpButton();
   await loadEnvironments();
+  firstVisit = !hasBeenWelcomed() && !hasUsedAppBefore();
+  if (!firstVisit) markWelcomed();
   await addParkOnFirstRun();
   applyRoute();
 }
