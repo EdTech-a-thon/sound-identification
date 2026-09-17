@@ -851,9 +851,9 @@ function renderWelcome() {
     <main>
       <section class="welcome-hero">
         <div class="welcome-hero-copy">
-          <p class="eyebrow">LISTEN · NOTICE · CONNECT</p>
-          <h1>Turn everyday sounds into a learning adventure.</h1>
-          <p class="welcome-lede">Build playful sound-matching activities from the places and objects your learners know. Add a backdrop, place pictures, attach sounds, and you’re ready to play.</p>
+          <p class="eyebrow">LISTEN · IDENTIFY · CONNECT</p>
+          <h1>Help learners identify sounds in everyday environments.</h1>
+          <p class="welcome-lede">Everyday Sound Lab helps learners develop sound recognition. Build a familiar environment, attach sounds to the objects in it, and give learners practice matching what they hear to what made it.</p>
           <button class="welcome-start" type="button">Start creating ${icon("back")}</button>
           <p class="welcome-fineprint">Free to use. No account needed. Your work stays on this device.</p>
         </div>
@@ -862,11 +862,11 @@ function renderWelcome() {
       <section class="welcome-band" id="how-it-works" aria-labelledby="how-it-works-title">
         <div class="welcome-section">
           <p class="eyebrow">HOW IT WORKS</p>
-          <h2 id="how-it-works-title">From your world to a listening game</h2>
+          <h2 id="how-it-works-title">Build a familiar setting for sound-identification practice</h2>
           <ol class="welcome-steps">
-            <li><span>1</span><h3>Choose a scene</h3><p>Upload a photo or begin with a blank space for your activity.</p></li>
-            <li><span>2</span><h3>Add pictures and sounds</h3><p>Place each object where it belongs, then attach its familiar sound.</p></li>
-            <li><span>3</span><h3>Play together</h3><p>Learners listen closely and choose the picture that made each sound.</p></li>
+            <li><span>1</span><h3>Choose an environment</h3><p>Upload a photo or begin with a blank space to create a familiar setting.</p></li>
+            <li><span>2</span><h3>Add objects and sounds</h3><p>Place pictures of sound sources in the scene, then attach a sound to each one.</p></li>
+            <li><span>3</span><h3>Practice listening</h3><p>Learners hear one sound at a time and choose the picture they think made it.</p></li>
           </ol>
         </div>
       </section>

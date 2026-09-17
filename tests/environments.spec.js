@@ -202,7 +202,9 @@ test("first-time visitors see a welcome page, footer, and site information befor
   });
   await page.goto("/");
 
-  await expect(page.getByRole("heading", { name: "Turn everyday sounds into a learning adventure." })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Help learners identify sounds in everyday environments." })).toBeVisible();
+  await expect(page.getByText("Everyday Sound Lab helps learners develop sound recognition.", { exact: false })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Practice listening" })).toBeVisible();
   await expect(page.getByRole("contentinfo").getByRole("link", { name: "Built by teacher.dev" })).toHaveAttribute("href", "https://teacher.dev");
   await expect(page.getByRole("contentinfo").getByRole("link", { name: "about" })).toHaveAttribute("href", "/about");
   await expect(page.getByRole("contentinfo").getByRole("link", { name: "privacy" })).toHaveAttribute("href", "/privacy");
