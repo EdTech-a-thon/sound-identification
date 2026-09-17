@@ -1363,7 +1363,9 @@ test("an educator can attach a sound through the sprite menu with an editable, p
   await page.getByRole("button", { name: "Create environment" }).click();
   await chooseBlankBackdrop(page);
   await page.getByLabel("Add sprite image").setInputFiles(validImage("wind_chime.png"));
-  await expect(page.getByRole("button", { name: "Wind Chime", exact: true })).toBeVisible();
+  const sprite = page.getByRole("button", { name: "Wind Chime", exact: true });
+  await expect(sprite).toBeVisible();
+  await expect(sprite.locator(".sprite-no-sound")).toBeVisible();
   await expect(page.getByRole("status")).toHaveText("Saved on this device");
 
   await openSpriteSound(page, "Wind Chime");
@@ -1377,6 +1379,7 @@ test("an educator can attach a sound through the sprite menu with an editable, p
 
   await expect(page.getByRole("heading", { name: "Label this sound" })).toHaveCount(0);
   await expect(page.getByRole("status")).toHaveText("Saved on this device");
+  await expect(sprite.locator(".sprite-no-sound")).toHaveCount(0);
   // The card now shows the sound by its label, with a play control beside it.
   const card = page.getByRole("toolbar", { name: "Sprite options for Wind Chime" });
   await expect(card.getByRole("button", { name: "Wind chime ringing" })).toBeVisible();
@@ -1496,7 +1499,9 @@ test("replacing or removing an existing sprite sound happens from the sound wind
   await soundModal(page).getByRole("button", { name: "Remove sound" }).click();
   await expect(page.getByRole("status")).toHaveText("Saved on this device");
   await expect(card.getByRole("button", { name: "Add sound" })).toBeVisible();
-  await expect(page.getByRole("button", { name: "Bell Tower", exact: true })).toBeVisible();
+  const sprite = page.getByRole("button", { name: "Bell Tower", exact: true });
+  await expect(sprite).toBeVisible();
+  await expect(sprite.locator(".sprite-no-sound")).toBeVisible();
 });
 
 test("blank, image, and missing backdrop states are distinct undo and redo steps", async ({ page }) => {

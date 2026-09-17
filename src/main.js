@@ -1242,12 +1242,26 @@ function updateSpriteElements(sprite, layer) {
   if (!button) return;
   button.setAttribute("aria-pressed", String(selected));
   button.setAttribute("aria-label", sprite.name);
+  updateSpriteNoSoundBadge(button, sprite);
   const image = button.querySelector("img");
   if (!image) return;
   image.alt = sprite.name;
   if (spriteImageBlobs.get(image) === sprite.image.blob) return;
   spriteImageBlobs.set(image, sprite.image.blob);
   image.src = blobUrl(sprite.image.blob);
+}
+
+function updateSpriteNoSoundBadge(button, sprite) {
+  const badge = button.querySelector(".sprite-no-sound");
+  if (spriteHasSound(sprite)) {
+    badge?.remove();
+    return;
+  }
+  if (!badge) {
+    button.insertAdjacentHTML("beforeend", spriteNoSoundBadgeMarkup(sprite));
+    return;
+  }
+  badge.style.transform = `rotate(${-(sprite.rotationDegrees || 0)}deg)`;
 }
 
 // The card is rebuilt only when its words change (a rename, a new sound, a preview starting),
