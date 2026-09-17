@@ -204,6 +204,21 @@ test("every surface has its own address, the Park example included", async ({ pa
   await expect(page.getByRole("heading", { name: "A day at the park" })).toBeVisible();
 });
 
+test("quiz sounds are chosen independently, so the same sound can play twice in a row", async ({ page }) => {
+  await page.addInitScript(() => {
+    Math.random = () => 0;
+  });
+  await page.goto("/play/park");
+
+  const bird = page.getByRole("button", { name: "Choose the Bird", exact: true });
+  await bird.click();
+  await expect(page.getByRole("status")).toHaveText("Yes! That was bird.");
+
+  await page.getByRole("button", { name: "New sound" }).click();
+  await bird.click();
+  await expect(page.getByRole("status")).toHaveText("Yes! That was bird.");
+});
+
 test("an environment editor has its own address that survives a reload", async ({ page }) => {
   await page.goto("/");
   await page.getByRole("button", { name: "Create environment" }).click();
