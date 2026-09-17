@@ -1,0 +1,28 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 560 470">
+  <defs>
+    <filter id="shadow" x="-20%" y="-25%" width="150%" height="170%">
+      <feDropShadow dx="0" dy="16" stdDeviation="9" flood-color="#315a51" flood-opacity="0.14"/>
+    </filter>
+  </defs>
+  <path d="M42 388c91-58 177-64 258-29 80 34 149 29 218-14v88H42Z" fill="#dcebdc"/>
+  <circle cx="452" cy="75" r="38" fill="#f5d97b"/>
+  <path d="M112 360v-154m0 54-48-53m48 25 54-69" fill="none" stroke="#6f8c69" stroke-width="15" stroke-linecap="round" stroke-linejoin="round"/>
+  <g fill="#9acb84" opacity=".92">
+    <circle cx="61" cy="192" r="47"/>
+    <circle cx="126" cy="164" r="58"/>
+    <circle cx="170" cy="216" r="43"/>
+  </g>
+  <g filter="url(#shadow)">
+    <rect x="217" y="150" width="245" height="178" rx="24" fill="#fffdf9" stroke="#477b70" stroke-width="4"/>
+    <circle cx="289" cy="239" r="46" fill="#e5f1e7"/>
+    <path d="M280 216v46l33-23Z" fill="#477b70"/>
+    <path d="M372 214c14 13 14 37 0 50m25-72c28 26 28 68 0 94" fill="none" stroke="#477b70" stroke-width="8" stroke-linecap="round"/>
+  </g>
+  <g fill="none" stroke="#355f57" stroke-width="7" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M232 90v43c0 12-19 16-26 8-7-9 3-21 26-17m0-34 37-10v39c0 12-19 16-26 8-7-9 3-21 26-17V80"/>
+    <path d="M473 213v35c0 11-17 14-23 7-7-8 2-18 23-14"/>
+  </g>
+  <circle cx="338" cy="89" r="8" fill="#ef9a72"/>
+  <circle cx="505" cy="145" r="6" fill="#f1c85d"/>
+  <circle cx="198" cy="345" r="7" fill="#6faaa0"/>
+</svg>

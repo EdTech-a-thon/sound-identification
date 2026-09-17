@@ -1,5 +1,11 @@
 import { expect, test } from "@playwright/test";
 
+test.beforeEach(async ({ page }) => {
+  await page.addInitScript(() => {
+    localStorage.setItem("sound-explorer.welcomed", "true");
+  });
+});
+
 const validImage = (name = "background.png", mimeType = "image/png") => ({
   name,
   mimeType,
@@ -189,6 +195,32 @@ async function spriteGeometry(page, name, containerSelector = ".activity-canvas"
   };
 }
 
+test("first-time visitors see a welcome page, footer, and site information before entering the library", async ({ page }) => {
+  await page.addInitScript(() => {
+    localStorage.removeItem("sound-explorer.welcomed");
+    localStorage.removeItem("sound-explorer.park-added");
+  });
+  await page.goto("/");
+
+  await expect(page.getByRole("heading", { name: "Turn everyday sounds into a learning adventure." })).toBeVisible();
+  await expect(page.getByRole("contentinfo").getByRole("link", { name: "Built by teacher.dev" })).toHaveAttribute("href", "https://teacher.dev");
+  await expect(page.getByRole("contentinfo").getByRole("link", { name: "about" })).toHaveAttribute("href", "/about");
+  await expect(page.getByRole("contentinfo").getByRole("link", { name: "privacy" })).toHaveAttribute("href", "/privacy");
+
+  await page.getByRole("button", { name: "Start creating" }).click();
+  await expect(page.getByRole("heading", { name: "Your environments" })).toBeVisible();
+  await page.getByRole("button", { name: "Help" }).click();
+  await expect(page.getByRole("dialog", { name: "Need a hand?" })).toContainText("support@teacher.dev");
+  await page.getByRole("button", { name: "Close help" }).click();
+  await page.reload();
+  await expect(page.getByRole("heading", { name: "Your environments" })).toBeVisible();
+
+  await page.goto("/about");
+  await expect(page.getByRole("heading", { name: "About Everyday Sound Lab" })).toBeVisible();
+  await page.goto("/privacy");
+  await expect(page.getByRole("heading", { name: "Privacy" })).toBeVisible();
+});
+
 test("every surface has its own address, the Park example included", async ({ page }) => {
   await page.goto("/");
   await expect(page).toHaveURL("/");
@@ -202,6 +234,21 @@ test("every surface has its own address, the Park example included", async ({ pa
   await page.reload();
   await expect(page).toHaveURL("/play/park");
   await expect(page.getByRole("heading", { name: "A day at the park" })).toBeVisible();
+});
+
+test("quiz sounds are chosen independently, so the same sound can play twice in a row", async ({ page }) => {
+  await page.addInitScript(() => {
+    Math.random = () => 0;
+  });
+  await page.goto("/play/park");
+
+  const bird = page.getByRole("button", { name: "Choose the Bird", exact: true });
+  await bird.click();
+  await expect(page.getByRole("status")).toHaveText("Yes! That was bird.");
+
+  await page.getByRole("button", { name: "New sound" }).click();
+  await bird.click();
+  await expect(page.getByRole("status")).toHaveText("Yes! That was bird.");
 });
 
 test("an environment editor has its own address that survives a reload", async ({ page }) => {
@@ -1316,7 +1363,9 @@ test("an educator can attach a sound through the sprite menu with an editable, p
   await page.getByRole("button", { name: "Create environment" }).click();
   await chooseBlankBackdrop(page);
   await page.getByLabel("Add sprite image").setInputFiles(validImage("wind_chime.png"));
-  await expect(page.getByRole("button", { name: "Wind Chime", exact: true })).toBeVisible();
+  const sprite = page.getByRole("button", { name: "Wind Chime", exact: true });
+  await expect(sprite).toBeVisible();
+  await expect(sprite.locator(".sprite-no-sound")).toBeVisible();
   await expect(page.getByRole("status")).toHaveText("Saved on this device");
 
   await openSpriteSound(page, "Wind Chime");
@@ -1330,6 +1379,7 @@ test("an educator can attach a sound through the sprite menu with an editable, p
 
   await expect(page.getByRole("heading", { name: "Label this sound" })).toHaveCount(0);
   await expect(page.getByRole("status")).toHaveText("Saved on this device");
+  await expect(sprite.locator(".sprite-no-sound")).toHaveCount(0);
   // The card now shows the sound by its label, with a play control beside it.
   const card = page.getByRole("toolbar", { name: "Sprite options for Wind Chime" });
   await expect(card.getByRole("button", { name: "Wind chime ringing" })).toBeVisible();
@@ -1449,7 +1499,9 @@ test("replacing or removing an existing sprite sound happens from the sound wind
   await soundModal(page).getByRole("button", { name: "Remove sound" }).click();
   await expect(page.getByRole("status")).toHaveText("Saved on this device");
   await expect(card.getByRole("button", { name: "Add sound" })).toBeVisible();
-  await expect(page.getByRole("button", { name: "Bell Tower", exact: true })).toBeVisible();
+  const sprite = page.getByRole("button", { name: "Bell Tower", exact: true });
+  await expect(sprite).toBeVisible();
+  await expect(sprite.locator(".sprite-no-sound")).toBeVisible();
 });
 
 test("blank, image, and missing backdrop states are distinct undo and redo steps", async ({ page }) => {
